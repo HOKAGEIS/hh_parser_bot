@@ -97,14 +97,17 @@ async def settings_reset(callback: CallbackQuery):
     )
     
     user = await db.get_user(callback.from_user.id)
-    is_authorized = bool(user and user.hh_access_token)
     
-    await callback.message.edit_text(
-        "⚙️ <b>Настройки</b>\n\n"
-        "✅ Настройки сброшены!",
-        reply_markup=kb.settings_kb(user, is_authorized),
-        parse_mode="HTML"
-    )
+    try:
+        await callback.message.edit_text(
+            "⚙️ <b>Настройки</b>\n\n"
+            "✅ Все настройки сброшены!",
+            reply_markup=kb.settings_kb(user),
+            parse_mode="HTML"
+        )
+    except Exception:
+        pass  # Игнорируем если сообщение не изменилось
+    
     await callback.answer("🔄 Сброшено")
 
 
@@ -328,3 +331,4 @@ async def show_support(message: Message):
         reply_markup=kb.support_kb(),
         parse_mode="HTML"
     )
+
