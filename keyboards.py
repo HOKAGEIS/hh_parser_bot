@@ -769,6 +769,79 @@ def admin_back_kb() -> InlineKeyboardMarkup:
     )
     return builder.as_markup()
 
+def vacancy_nav_kb(
+    vacancy_id: str,
+    is_fav: bool,
+    current_index: int,
+    total_loaded: int,
+    total_found: int,
+    can_load_more: bool
+) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    
+    # Полное описание
+    builder.row(
+        InlineKeyboardButton(text="📄 Подробнее", callback_data=f"full_{vacancy_id}")
+    )
+    
+    # Избранное
+    if is_fav:
+        builder.row(
+            InlineKeyboardButton(text="💔 Убрать из избранного", callback_data=f"unfav_{vacancy_id}")
+        )
+    else:
+        builder.row(
+            InlineKeyboardButton(text="⭐ В избранное", callback_data=f"fav_{vacancy_id}")
+        )
+    
+    # Навигация
+    nav_buttons = []
+    
+    if current_index > 0:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data="vacancy_prev"))
+    
+    nav_buttons.append(
+        InlineKeyboardButton(
+            text=f"{current_index + 1}/{total_loaded}",
+            callback_data="vacancy_info"
+        )
+    )
+    
+    if current_index < total_loaded - 1:
+        nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data="vacancy_next"))
+    
+    builder.row(*nav_buttons)
+    
+    # Кнопка загрузить ещё
+    if can_load_more and current_index >= total_loaded - 3:
+        builder.row(
+            InlineKeyboardButton(
+                text=f"📥 Загрузить ещё (всего {total_found})",
+                callback_data="load_more_vacancies"
+            )
+        )
+    
+    # Подписка и закрыть
+    builder.row(
+        InlineKeyboardButton(text="🔔 Подписаться", callback_data="subscribe_current"),
+        InlineKeyboardButton(text="❌ Закрыть", callback_data="close_search")
+    )
+    
+    return builder.as_markup()
+
+
+@router.callback_query(F.data == "vacancy_info")
+async def vacancy_info(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    total = data.get("total", 0)
+    loaded = len(data.get("vacancies", []))
+    
+    await callback.answer(
+        f"Найдено: {total} вакансий\n"
+        f"Загружено: {loaded}",
+        show_alert=True
+    )
+
 
 
 
