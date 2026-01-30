@@ -441,11 +441,17 @@ async def reset_filters(callback: CallbackQuery, state: FSMContext):
 
 # ==================== ПОИСК ====================
 
+# В начале файла измени VACANCIES_PER_PAGE
+# Или в config.py установи VACANCIES_PER_PAGE = 20
+
 @router.callback_query(F.data == "search_now")
 async def execute_search(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     
     await callback.message.edit_text("🔍 Ищу вакансии...")
+    
+    # Увеличиваем количество на странице
+    per_page = 20  # Было 5
     
     vacancies, total = await hh.search_vacancies(
         text=data.get("query"),
@@ -456,7 +462,7 @@ async def execute_search(callback: CallbackQuery, state: FSMContext):
         only_with_salary=data.get("only_with_salary", False),
         exclude_words=data.get("exclude_words", []),
         page=0,
-        per_page=config.VACANCIES_PER_PAGE
+        per_page=per_page
     )
     
     if not vacancies:
@@ -490,70 +496,123 @@ async def execute_search(callback: CallbackQuery, state: FSMContext):
     await state.update_data(
         vacancies=vacancies_data,
         total=total,
-        page=0
+        page=0,
+        current_index=0,  # Добавляем индекс текущей вакансии
+        per_page=per_page
     )
     await state.set_state(SearchStates.viewing_results)
     
-    # Проверяем авторизацию
-    user = await db.get_user(callback.from_user.id)
-    is_authorized = bool(user and user.hh_access_token)
-    
     # Показываем первую вакансию
-    await show_vacancy_message(
-        callback.message, 
-        vacancies[0], 
-        0, 
-        total, 
-        callback.from_user.id,
-        is_authorized
-    )
+    await show_vacancy_by_index(callback.message, vacancies_data, 0, total, callback.from_user.id, state)
     await callback.answer()
 
 
-async def show_vacancy_message(message, vacancy: Vacancy, page: int, total: int, user_id: int, is_authorized: bool):
-    """Показ вакансии"""
-    is_fav = await db.is_favorite(user_id, vacancy.id)
-    is_applied = await db.was_applied(user_id, vacancy.id)
+async def show_vacancy_by_index(message, vacancies: list, index: int, total: int, user_id: int, state: FSMContext):
+    """Показ вакансии по индексу в текущем списке"""
+    if index < 0 or index >= len(vacancies):
+        return
     
-    # Рассчитываем реальное количество страниц
-    total_pages = (total + config.VACANCIES_PER_PAGE - 1) // config.VACANCIES_PER_PAGE
+    v = vacancies[index]
+    is_fav = await db.is_favorite(user_id, v["id"])
+    
+    # Формируем зарплату
+    salary_text = "💰 Зарплата не указана"
+    if v.get("salary_from") or v.get("salary_to"):
+        currency = {"RUR": "₽", "USD": "$", "EUR": "€"}.get(v.get("salary_currency"), "")
+        if v.get("salary_from") and v.get("salary_to"):
+            salary_text = f"💰 {v['salary_from']:,} - {v['salary_to']:,} {currency}".replace(",", " ")
+        elif v.get("salary_from"):
+            salary_text = f"💰 от {v['salary_from']:,} {currency}".replace(",", " ")
+        else:
+            salary_text = f"💰 до {v['salary_to']:,} {currency}".replace(",", " ")
+    
+    req = v.get("requirement") or ""
+    # Очищаем HTML теги
+    import re
+    req = re.sub(r'<[^>]+>', '', req)
+    if len(req) > 150:
+        req = req[:150] + "..."
     
     text = (
-        f"📊 <b>Найдено: {total:,} вакансий</b>\n\n".replace(",", " ") +
-        vacancy.to_short_message()
-    )
+        f"📊 <b>Найдено: {total:,} вакансий</b>\n"
+        f"📄 Вакансия {index + 1} из {len(vacancies)} (загружено)\n\n"
+        f"📌 <b>{v['name']}</b>\n\n"
+        f"🏢 {v['employer']}\n"
+        f"📍 {v['city']}\n"
+        f"{salary_text}\n"
+        f"📋 Опыт: {v['experience']}\n"
+        f"⏰ {v['schedule']}\n\n"
+        f"📝 {req}\n\n"
+        f"🔗 <a href='{v['url']}'>Открыть на hh.ru</a>"
+    ).replace(",", " ")
+    
+    data = await state.get_data()
+    total_loaded = len(vacancies)
+    can_load_more = total > total_loaded
     
     await message.edit_text(
         text,
-        reply_markup=kb.vacancy_kb(
-            vacancy.id, 
-            is_fav, 
-            page, 
-            total_pages,
-            is_applied,
-            is_authorized
+        reply_markup=kb.vacancy_nav_kb(
+            vacancy_id=v["id"],
+            is_fav=is_fav,
+            current_index=index,
+            total_loaded=total_loaded,
+            total_found=total,
+            can_load_more=can_load_more
         ),
         parse_mode="HTML",
         disable_web_page_preview=True
     )
 
 
-# ==================== НАВИГАЦИЯ ====================
+@router.callback_query(F.data == "vacancy_prev", SearchStates.viewing_results)
+async def vacancy_prev(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    vacancies = data.get("vacancies", [])
+    current = data.get("current_index", 0)
+    total = data.get("total", 0)
+    
+    if current > 0:
+        current -= 1
+        await state.update_data(current_index=current)
+        await show_vacancy_by_index(callback.message, vacancies, current, total, callback.from_user.id, state)
+    
+    await callback.answer()
 
-@router.callback_query(F.data.startswith("page_"), SearchStates.viewing_results)
-async def change_page(callback: CallbackQuery, state: FSMContext):
-    if callback.data == "page_info":
-        data = await state.get_data()
-        total = data.get("total", 0)
-        await callback.answer(f"Всего найдено: {total:,} вакансий".replace(",", " "), show_alert=True)
+
+@router.callback_query(F.data == "vacancy_next", SearchStates.viewing_results)
+async def vacancy_next(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    vacancies = data.get("vacancies", [])
+    current = data.get("current_index", 0)
+    total = data.get("total", 0)
+    
+    if current < len(vacancies) - 1:
+        current += 1
+        await state.update_data(current_index=current)
+        await show_vacancy_by_index(callback.message, vacancies, current, total, callback.from_user.id, state)
+    
+    await callback.answer()
+
+
+@router.callback_query(F.data == "load_more_vacancies", SearchStates.viewing_results)
+async def load_more_vacancies(callback: CallbackQuery, state: FSMContext):
+    """Загрузить ещё вакансии"""
+    data = await state.get_data()
+    vacancies = data.get("vacancies", [])
+    total = data.get("total", 0)
+    per_page = data.get("per_page", 20)
+    
+    # Вычисляем следующую страницу
+    current_page = len(vacancies) // per_page
+    
+    if len(vacancies) >= total:
+        await callback.answer("Все вакансии загружены")
         return
     
-    page = int(callback.data.replace("page_", ""))
-    data = await state.get_data()
+    await callback.answer("🔄 Загружаю ещё...")
     
-    await callback.message.edit_text("🔄 Загружаю...")
-    
-    vacancies, total = await hh.search_vacancies(
+    new_vacancies, _ = await hh.search_vacancies(
         text=data.get("query"),
         area=data.get("city"),
         experience=data.get("experience"),
@@ -561,28 +620,34 @@ async def change_page(callback: CallbackQuery, state: FSMContext):
         salary=data.get("salary"),
         only_with_salary=data.get("only_with_salary", False),
         exclude_words=data.get("exclude_words", []),
-        page=page,
-        per_page=config.VACANCIES_PER_PAGE
+        page=current_page,
+        per_page=per_page
     )
     
-    if not vacancies:
-        await callback.message.edit_text("😔 Больше вакансий нет")
-        return
-    
-    vacancies_data = [{
-        "id": v.id, "name": v.name, "url": v.url, "employer": v.employer,
-        "salary_from": v.salary_from, "salary_to": v.salary_to,
-        "salary_currency": v.salary_currency, "city": v.city,
-        "experience": v.experience, "schedule": v.schedule, "requirement": v.requirement,
-    } for v in vacancies]
-    
-    await state.update_data(vacancies=vacancies_data, page=page, total=total)
-    
-    user = await db.get_user(callback.from_user.id)
-    is_authorized = bool(user and user.hh_access_token)
-    
-    await show_vacancy_message(callback.message, vacancies[0], page, total, callback.from_user.id, is_authorized)
-    await callback.answer()
+    if new_vacancies:
+        for v in new_vacancies:
+            vacancies.append({
+                "id": v.id,
+                "name": v.name,
+                "url": v.url,
+                "employer": v.employer,
+                "salary_from": v.salary_from,
+                "salary_to": v.salary_to,
+                "salary_currency": v.salary_currency,
+                "city": v.city,
+                "experience": v.experience,
+                "schedule": v.schedule,
+                "requirement": v.requirement,
+            })
+        
+        await state.update_data(vacancies=vacancies)
+        
+        # Показываем следующую вакансию
+        current = data.get("current_index", 0) + 1
+        await state.update_data(current_index=current)
+        await show_vacancy_by_index(callback.message, vacancies, current, total, callback.from_user.id, state)
+    else:
+        await callback.answer("Больше вакансий нет")
 
 
 # ==================== ПОЛНОЕ ОПИСАНИЕ ====================
@@ -727,4 +792,5 @@ async def subscribe_current(callback: CallbackQuery, state: FSMContext):
     )
     
     await callback.answer("🔔 Подписка создана!", show_alert=True)
+
 
