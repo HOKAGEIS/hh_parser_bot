@@ -117,20 +117,19 @@ async def main():
     await bot.delete_webhook(drop_pending_updates=True)
     
     # Подключаем роутеры
-    try:
-        from handlers import search, favorites, subscriptions, settings
-        
-        dp.include_router(search.router)
-        dp.include_router(favorites.router)
-        dp.include_router(subscriptions.router)
-        dp.include_router(settings.router)
-        
-        logger.info("✅ Роутеры подключены")
-    except Exception as e:
-        logger.error(f"❌ Ошибка роутеров: {e}")
-        import traceback
-        traceback.print_exc()
-        return
+# Подключаем роутеры
+try:
+    from handlers import search, favorites, subscriptions, settings, admin
+    
+    dp.include_router(search.router)
+    dp.include_router(favorites.router)
+    dp.include_router(subscriptions.router)
+    dp.include_router(settings.router)
+    dp.include_router(admin.router)
+    
+    logger.info("✅ Роутеры подключены")
+except Exception as e:
+    logger.error(f"❌ Ошибка роутеров: {e}")
     
     logger.info("🚀 Бот запущен!")
     
@@ -143,3 +142,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("👋 Бот остановлен")
+
