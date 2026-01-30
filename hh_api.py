@@ -202,28 +202,31 @@ class HHApi:
         if data and "items" in data:
             return data["items"]
 
-        async def get_user_stats(self, access_token: str) -> dict:
-    """Получить статистику пользователя"""
-    stats = {}
-    
-    # Получаем резюме со статистикой
-    resumes = await self.get_my_resumes(access_token)
-    
-    total_views = 0
-    for resume in resumes:
-        resume_id = resume.get("id")
-        if resume_id:
-            # Получаем детальную статистику резюме
-            detail = await self._request(
-                f"/resumes/{resume_id}/stats",
-                access_token=access_token
-            )
-            if detail and "views" in detail:
-                total_views += detail.get("views", 0)
-    
-    stats["total_resume_views"] = total_views
-    
-    return stats
+            async def get_negotiations(self, access_token: str) -> List[dict]:
+        """Получить список откликов"""
+        data = await self._request("/negotiations", access_token=access_token)
+        if data and "items" in data:
+            return data["items"]
+        return []
+
+    async def get_user_stats(self, access_token: str) -> dict:
+        """Получить статистику пользователя"""
+        stats = {}
+        resumes = await self.get_my_resumes(access_token)
+        
+        total_views = 0
+        for resume in resumes:
+            resume_id = resume.get("id")
+            if resume_id:
+                detail = await self._request(
+                    f"/resumes/{resume_id}/stats",
+                    access_token=access_token
+                )
+                if detail and "views" in detail:
+                    total_views += detail.get("views", 0)
+        
+        stats["total_resume_views"] = total_views
+        return stats
         
         # Альтернативный поиск через areas
         all_areas = await self._request("/areas")
@@ -448,4 +451,5 @@ class HHApi:
 
 # Глобальный экземпляр
 hh = HHApi()
+
 
