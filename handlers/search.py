@@ -793,4 +793,15 @@ async def subscribe_current(callback: CallbackQuery, state: FSMContext):
     
     await callback.answer("🔔 Подписка создана!", show_alert=True)
 
+@router.callback_query(F.data == "vacancy_info")
+async def vacancy_info(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    total = data.get("total", 0)
+    loaded = len(data.get("vacancies", []))
+    
+    await callback.answer(
+        f"Найдено: {total} вакансий\nЗагружено: {loaded}",
+        show_alert=True
+    )
+
 
