@@ -42,11 +42,14 @@ async def start_search(message: Message, state: FSMContext):
 async def process_search_query(message: Message, state: FSMContext):
     query = message.text.strip()
     
+    # Игнорируем кнопки меню
+    if query in config.MENU_BUTTONS:
+        await state.clear()
+        return
+    
     if len(query) < 2:
         await message.answer("⚠️ Запрос слишком короткий. Минимум 2 символа.")
         return
-    
-    user = await db.get_user(message.from_user.id)
     
     await state.update_data(
         query=query,
@@ -803,5 +806,6 @@ async def vacancy_info(callback: CallbackQuery, state: FSMContext):
         f"Найдено: {total} вакансий\nЗагружено: {loaded}",
         show_alert=True
     )
+
 
 
