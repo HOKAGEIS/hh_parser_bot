@@ -836,12 +836,5 @@ async def vacancy_info(callback: CallbackQuery, state: FSMContext):
     total = data.get("total", 0)
     loaded = len(data.get("vacancies", []))
     
-    await callback.answer(
-        f"Найдено: {total} вакансий\n"
-        f"Загружено: {loaded}",
-        show_alert=True
-    )
-
-
 
 
