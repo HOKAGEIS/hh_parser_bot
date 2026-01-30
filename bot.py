@@ -182,3 +182,14 @@ if __name__ == "__main__":
         print(f"❌ Критическая ошибка: {e}")
         import traceback
         traceback.print_exc()
+
+@dp.message(F.text == "💬 Поддержка")
+async def show_support(message: Message):
+    await message.answer(
+        "💬 <b>Техническая поддержка</b>\n\n"
+        "Если у вас возникли вопросы или проблемы:\n\n"
+        "📩 Напишите: @YOUR_USERNAME\n"  # Замени на свой username
+        "📧 Email: support@example.com",
+        parse_mode="HTML"
+    )
+
