@@ -830,11 +830,3 @@ def vacancy_nav_kb(
     return builder.as_markup()
 
 
-@router.callback_query(F.data == "vacancy_info")
-async def vacancy_info(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    total = data.get("total", 0)
-    loaded = len(data.get("vacancies", []))
-    
-
-
