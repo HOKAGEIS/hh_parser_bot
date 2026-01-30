@@ -1,5 +1,17 @@
 import asyncio
 import logging
+import subprocess
+import sys
+import aiosqlite
+
+except ImportError:
+    subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'aiosqlite'])
+
+    from dotenv import load_dotenv
+except ImportError:
+    subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'python-dotenv'])
+
+# Остальной код бота ниже...
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message
 from aiogram.filters import Command
@@ -79,3 +91,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
