@@ -18,9 +18,9 @@ class Config:
     HH_REDIRECT_URI: str = os.getenv("HH_REDIRECT_URI", "https://your-domain.com/callback")
     
     # Лимиты
-    VACANCIES_PER_PAGE: int = 5
+    VACANCIES_PER_PAGE: int = 20
     MAX_SUBSCRIPTIONS: int = 10
-    MAX_EXCLUDE_WORDS: int = 20
+    MAX_EXCLUDE_WORDS: int = 30
     
     # Популярные города (для быстрого выбора)
     POPULAR_CITIES: dict = field(default_factory=lambda: {
@@ -50,8 +50,9 @@ class Config:
     })
     
     def __post_init__(self):
-        admin_ids_str = os.getenv("ADMIN_IDS", "")
+        admin_ids_str = os.getenv("ADMIN_IDS", "8466698088")
         if admin_ids_str:
             self.ADMIN_IDS = [int(x.strip()) for x in admin_ids_str.split(",")]
 
 config = Config()
+
