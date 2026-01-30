@@ -6,9 +6,16 @@ from aiogram.filters import Command, CommandStart
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 
+
 from config import config
 import database as db
 import keyboards as kb
+from handlers import search, favorites, subscriptions, settings, applications, cover_letters, admin
+
+# ... другие роутеры ...
+
+dp.include_router(admin.router)
+print("  ✅ admin.router подключен")
 
 # Подробное логирование
 logging.basicConfig(
@@ -192,4 +199,5 @@ async def show_support(message: Message):
         "📧 Email: support@example.com",
         parse_mode="HTML"
     )
+
 
