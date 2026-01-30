@@ -690,3 +690,37 @@ async def cancel(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.edit_text("❌ Отменено")
     await callback.answer()
+
+# ==================== ПОДПИСКА ИЗ ПОИСКА ====================
+
+@router.callback_query(F.data == "subscribe_current")
+async def subscribe_current(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    query = data.get("query")
+    
+    if not query:
+        await callback.answer("❌ Нет активного поиска", show_alert=True)
+        return
+    
+    # Проверяем лимит подписок
+    count = await db.get_subscriptions_count(callback.from_user.id)
+    if count >= config.MAX_SUBSCRIPTIONS:
+        await callback.answer(
+            f"⚠️ Максимум {config.MAX_SUBSCRIPTIONS} подписок",
+            show_alert=True
+        )
+        return
+    
+    # Создаём подписку с текущими фильтрами
+    await db.add_subscription(
+        user_id=callback.from_user.id,
+        query=query,
+        city=data.get("city"),
+        city_name=data.get("city_name"),
+        experience=data.get("experience"),
+        schedule=data.get("schedule"),
+        min_salary=data.get("salary"),
+        exclude_words=data.get("exclude_words", [])
+    )
+    
+    await callback.answer("🔔 Подписка создана!", show_alert=True)
