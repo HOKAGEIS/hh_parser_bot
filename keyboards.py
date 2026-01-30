@@ -506,8 +506,14 @@ def settings_kb(user, is_authorized: bool = False) -> InlineKeyboardMarkup:
         )
     )
     
-    # Авторизация HH
+    # HH.ru
     if is_authorized:
+        builder.row(
+            InlineKeyboardButton(
+                text="📊 Статистика HH.ru",
+                callback_data="hh_stats"
+            )
+        )
         builder.row(
             InlineKeyboardButton(
                 text="🔗 HH.ru: Подключено ✅",
@@ -517,37 +523,15 @@ def settings_kb(user, is_authorized: bool = False) -> InlineKeyboardMarkup:
     else:
         builder.row(
             InlineKeyboardButton(
-                text="🔗 Подключить HH.ru для откликов",
+                text="🔗 Подключить HH.ru",
                 callback_data="hh_connect"
             )
         )
     
     builder.row(
-        InlineKeyboardButton(
-            text="🔄 Сбросить настройки",
-            callback_data="settings_reset"
-        )
+        InlineKeyboardButton(text="🔄 Сбросить", callback_data="settings_reset")
     )
     
-    return builder.as_markup()
-
-
-# ==================== ОБЩИЕ ====================
-
-def confirm_kb(action: str) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="✅ Да", callback_data=f"confirm_{action}"),
-        InlineKeyboardButton(text="❌ Нет", callback_data="cancel")
-    )
-    return builder.as_markup()
-
-
-def back_kb(callback_data: str = "cancel") -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="❌ Отмена", callback_data=callback_data)
-    )
     return builder.as_markup()
 # ==================== НАСТРОЙКИ HH ====================
 
@@ -766,6 +750,7 @@ def support_kb() -> InlineKeyboardMarkup:
         )
     )
     return builder.as_markup()
+
 
 
 
