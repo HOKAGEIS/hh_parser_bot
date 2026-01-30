@@ -681,9 +681,12 @@ async def remove_from_fav(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "close_search")
 async def close_search(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    await callback.message.delete()
+    await callback.message.edit_text(
+        "🔍 Поиск завершён.\n\n"
+        "Выберите действие в меню ниже 👇",
+        reply_markup=None
+    )
     await callback.answer()
-
 
 @router.callback_query(F.data == "cancel")
 async def cancel(callback: CallbackQuery, state: FSMContext):
@@ -724,3 +727,4 @@ async def subscribe_current(callback: CallbackQuery, state: FSMContext):
     )
     
     await callback.answer("🔔 Подписка создана!", show_alert=True)
+
