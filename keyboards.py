@@ -709,4 +709,63 @@ def admin_back_kb() -> InlineKeyboardMarkup:
     )
     return builder.as_markup()
 
+# ==================== HH.RU ====================
+
+def hh_connect_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_settings")
+    )
+    return builder.as_markup()
+
+
+def hh_stats_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="hh_stats")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_settings")
+    )
+    return builder.as_markup()
+
+
+def settings_exclude_kb(words: list) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    
+    builder.row(
+        InlineKeyboardButton(text="➕ Добавить", callback_data="settings_add_exclude")
+    )
+    
+    for word in words[:10]:
+        builder.row(
+            InlineKeyboardButton(
+                text=f"❌ {word}",
+                callback_data=f"settings_remove_exclude_{word}"
+            )
+        )
+    
+    if words:
+        builder.row(
+            InlineKeyboardButton(text="🗑 Очистить", callback_data="settings_clear_exclude")
+        )
+    
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_settings")
+    )
+    
+    return builder.as_markup()
+
+
+def support_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="💬 Написать в поддержку",
+            url=f"https://t.me/{config.SUPPORT_USERNAME}"
+        )
+    )
+    return builder.as_markup()
+
+
 
