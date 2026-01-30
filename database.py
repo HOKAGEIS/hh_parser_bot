@@ -11,10 +11,18 @@ class User:
     id: int
     username: Optional[str]
     default_city: Optional[str]
+    default_city_name: Optional[str]
     default_experience: Optional[str]
     default_schedule: Optional[str]
     min_salary: Optional[int]
     only_with_salary: bool
+    exclude_words: List[str]
+    # OAuth
+    hh_access_token: Optional[str]
+    hh_refresh_token: Optional[str]
+    hh_token_expires: Optional[str]
+    default_resume_id: Optional[str]
+    cover_letter_template: Optional[str]
     created_at: str
 
 @dataclass
@@ -22,7 +30,7 @@ class Favorite:
     id: int
     user_id: int
     vacancy_id: str
-    vacancy_data: dict  # JSON с данными вакансии
+    vacancy_data: dict
     added_at: str
 
 @dataclass
@@ -31,9 +39,11 @@ class Subscription:
     user_id: int
     query: str
     city: Optional[str]
+    city_name: Optional[str]
     experience: Optional[str]
     schedule: Optional[str]
     min_salary: Optional[int]
+    exclude_words: Optional[str]
     last_vacancy_id: Optional[str]
     active: bool
     created_at: str
@@ -48,10 +58,17 @@ async def init_db():
                 id INTEGER PRIMARY KEY,
                 username TEXT,
                 default_city TEXT,
+                default_city_name TEXT,
                 default_experience TEXT,
                 default_schedule TEXT,
                 min_salary INTEGER,
                 only_with_salary BOOLEAN DEFAULT 0,
+                exclude_words TEXT DEFAULT '[]',
+                hh_access_token TEXT,
+                hh_refresh_token TEXT,
+                hh_token_expires TEXT,
+                default_resume_id TEXT,
+                cover_letter_template TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -76,9 +93,11 @@ async def init_db():
                 user_id INTEGER NOT NULL,
                 query TEXT NOT NULL,
                 city TEXT,
+                city_name TEXT,
                 experience TEXT,
                 schedule TEXT,
                 min_salary INTEGER,
+                exclude_words TEXT DEFAULT '[]',
                 last_vacancy_id TEXT,
                 active BOOLEAN DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -86,14 +105,29 @@ async def init_db():
             )
         """)
         
-        # История поиска
+        # История откликов
         await db.execute("""
-            CREATE TABLE IF NOT EXISTS search_history (
+            CREATE TABLE IF NOT EXISTS applications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
-                query TEXT NOT NULL,
-                results_count INTEGER,
-                searched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                vacancy_id TEXT NOT NULL,
+                vacancy_name TEXT,
+                employer TEXT,
+                status TEXT DEFAULT 'sent',
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
+        
+        # Сопроводительные письма (шаблоны)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS cover_letters (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                text TEXT NOT NULL,
+                is_default BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id)
             )
         """)
@@ -110,44 +144,61 @@ async def get_user(user_id: int) -> Optional[User]:
         )
         row = await cursor.fetchone()
         if row:
-            return User(*row)
+            return User(
+                id=row[0],
+                username=row[1],
+                default_city=row[2],
+                default_city_name=row[3],
+                default_experience=row[4],
+                default_schedule=row[5],
+                min_salary=row[6],
+                only_with_salary=bool(row[7]),
+                exclude_words=json.loads(row[8]) if row[8] else [],
+                hh_access_token=row[9],
+                hh_refresh_token=row[10],
+                hh_token_expires=row[11],
+                default_resume_id=row[12],
+                cover_letter_template=row[13],
+                created_at=row[14]
+            )
     return None
 
 async def create_user(user_id: int, username: str = None):
     async with aiosqlite.connect(DATABASE) as db:
         await db.execute(
-            """INSERT OR IGNORE INTO users (id, username) VALUES (?, ?)""",
+            """INSERT OR IGNORE INTO users (id, username, exclude_words) 
+               VALUES (?, ?, '[]')""",
             (user_id, username)
         )
         await db.commit()
 
-async def update_user_settings(
-    user_id: int,
-    city: str = None,
-    experience: str = None,
-    schedule: str = None,
-    min_salary: int = None,
-    only_with_salary: bool = None
-):
+async def update_user_settings(user_id: int, **kwargs):
     async with aiosqlite.connect(DATABASE) as db:
         updates = []
         values = []
         
-        if city is not None:
-            updates.append("default_city = ?")
-            values.append(city)
-        if experience is not None:
-            updates.append("default_experience = ?")
-            values.append(experience)
-        if schedule is not None:
-            updates.append("default_schedule = ?")
-            values.append(schedule)
-        if min_salary is not None:
-            updates.append("min_salary = ?")
-            values.append(min_salary)
-        if only_with_salary is not None:
-            updates.append("only_with_salary = ?")
-            values.append(only_with_salary)
+        field_map = {
+            "city": "default_city",
+            "city_name": "default_city_name",
+            "experience": "default_experience",
+            "schedule": "default_schedule",
+            "min_salary": "min_salary",
+            "only_with_salary": "only_with_salary",
+            "exclude_words": "exclude_words",
+            "hh_access_token": "hh_access_token",
+            "hh_refresh_token": "hh_refresh_token",
+            "hh_token_expires": "hh_token_expires",
+            "default_resume_id": "default_resume_id",
+            "cover_letter_template": "cover_letter_template",
+        }
+        
+        for key, value in kwargs.items():
+            if key in field_map and value is not None:
+                db_field = field_map[key]
+                if key == "exclude_words" and isinstance(value, list):
+                    value = json.dumps(value, ensure_ascii=False)
+                updates.append(f"{db_field} = ?")
+                values.append(value)
         
         if updates:
             values.append(user_id)
@@ -156,6 +207,39 @@ async def update_user_settings(
                 values
             )
             await db.commit()
+
+
+# ==================== ИСКЛЮЧЕНИЯ ====================
+
+async def add_exclude_word(user_id: int, word: str) -> bool:
+    user = await get_user(user_id)
+    if not user:
+        return False
+    
+    words = user.exclude_words or []
+    if word.lower() not in [w.lower() for w in words]:
+        words.append(word.lower())
+        await update_user_settings(user_id, exclude_words=words)
+        return True
+    return False
+
+async def remove_exclude_word(user_id: int, word: str) -> bool:
+    user = await get_user(user_id)
+    if not user:
+        return False
+    
+    words = user.exclude_words or []
+    words_lower = [w.lower() for w in words]
+    if word.lower() in words_lower:
+        idx = words_lower.index(word.lower())
+        words.pop(idx)
+        await update_user_settings(user_id, exclude_words=words)
+        return True
+    return False
+
+async def get_exclude_words(user_id: int) -> List[str]:
+    user = await get_user(user_id)
+    return user.exclude_words if user else []
 
 
 # ==================== ИЗБРАННОЕ ====================
@@ -171,7 +255,7 @@ async def add_favorite(user_id: int, vacancy_id: str, vacancy_data: dict):
             await db.commit()
             return True
         except aiosqlite.IntegrityError:
-            return False  # Уже в избранном
+            return False
 
 async def remove_favorite(user_id: int, vacancy_id: str):
     async with aiosqlite.connect(DATABASE) as db:
@@ -208,15 +292,6 @@ async def is_favorite(user_id: int, vacancy_id: str) -> bool:
         )
         return await cursor.fetchone() is not None
 
-async def get_favorites_count(user_id: int) -> int:
-    async with aiosqlite.connect(DATABASE) as db:
-        cursor = await db.execute(
-            "SELECT COUNT(*) FROM favorites WHERE user_id = ?",
-            (user_id,)
-        )
-        row = await cursor.fetchone()
-        return row[0] if row else 0
-
 
 # ==================== ПОДПИСКИ ====================
 
@@ -224,16 +299,19 @@ async def add_subscription(
     user_id: int,
     query: str,
     city: str = None,
+    city_name: str = None,
     experience: str = None,
     schedule: str = None,
-    min_salary: int = None
+    min_salary: int = None,
+    exclude_words: List[str] = None
 ) -> int:
     async with aiosqlite.connect(DATABASE) as db:
         cursor = await db.execute(
             """INSERT INTO subscriptions 
-               (user_id, query, city, experience, schedule, min_salary)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (user_id, query, city, experience, schedule, min_salary)
+               (user_id, query, city, city_name, experience, schedule, min_salary, exclude_words)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, query, city, city_name, experience, schedule, min_salary,
+             json.dumps(exclude_words or [], ensure_ascii=False))
         )
         await db.commit()
         return cursor.lastrowid
@@ -253,21 +331,14 @@ async def get_subscriptions(user_id: int, active_only: bool = True) -> List[Subs
         rows = await cursor.fetchall()
         return [Subscription(*row) for row in rows]
 
-async def get_all_active_subscriptions() -> List[Subscription]:
+async def get_subscriptions_count(user_id: int) -> int:
     async with aiosqlite.connect(DATABASE) as db:
         cursor = await db.execute(
-            "SELECT * FROM subscriptions WHERE active = 1"
+            "SELECT COUNT(*) FROM subscriptions WHERE user_id = ? AND active = 1",
+            (user_id,)
         )
-        rows = await cursor.fetchall()
-        return [Subscription(*row) for row in rows]
-
-async def update_subscription_last_vacancy(sub_id: int, vacancy_id: str):
-    async with aiosqlite.connect(DATABASE) as db:
-        await db.execute(
-            "UPDATE subscriptions SET last_vacancy_id = ? WHERE id = ?",
-            (vacancy_id, sub_id)
-        )
-        await db.commit()
+        row = await cursor.fetchone()
+        return row[0] if row else 0
 
 async def delete_subscription(sub_id: int, user_id: int):
     async with aiosqlite.connect(DATABASE) as db:
@@ -294,32 +365,109 @@ async def toggle_subscription(sub_id: int, user_id: int) -> bool:
             return new_status
         return False
 
-async def get_subscriptions_count(user_id: int) -> int:
+
+# ==================== СОПРОВОДИТЕЛЬНЫЕ ПИСЬМА ====================
+
+async def add_cover_letter(user_id: int, name: str, text: str, is_default: bool = False) -> int:
+    async with aiosqlite.connect(DATABASE) as db:
+        if is_default:
+            await db.execute(
+                "UPDATE cover_letters SET is_default = 0 WHERE user_id = ?",
+                (user_id,)
+            )
+        
+        cursor = await db.execute(
+            "INSERT INTO cover_letters (user_id, name, text, is_default) VALUES (?, ?, ?, ?)",
+            (user_id, name, text, is_default)
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+async def get_cover_letters(user_id: int) -> List[dict]:
     async with aiosqlite.connect(DATABASE) as db:
         cursor = await db.execute(
-            "SELECT COUNT(*) FROM subscriptions WHERE user_id = ? AND active = 1",
+            "SELECT id, name, text, is_default FROM cover_letters WHERE user_id = ? ORDER BY is_default DESC",
             (user_id,)
         )
+        rows = await cursor.fetchall()
+        return [{"id": r[0], "name": r[1], "text": r[2], "is_default": r[3]} for r in rows]
+
+async def get_cover_letter(letter_id: int, user_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DATABASE) as db:
+        cursor = await db.execute(
+            "SELECT id, name, text, is_default FROM cover_letters WHERE id = ? AND user_id = ?",
+            (letter_id, user_id)
+        )
         row = await cursor.fetchone()
-        return row[0] if row else 0
+        if row:
+            return {"id": row[0], "name": row[1], "text": row[2], "is_default": row[3]}
+    return None
 
-
-# ==================== ИСТОРИЯ ====================
-
-async def add_search_history(user_id: int, query: str, results_count: int):
+async def delete_cover_letter(letter_id: int, user_id: int):
     async with aiosqlite.connect(DATABASE) as db:
         await db.execute(
-            "INSERT INTO search_history (user_id, query, results_count) VALUES (?, ?, ?)",
-            (user_id, query, results_count)
+            "DELETE FROM cover_letters WHERE id = ? AND user_id = ?",
+            (letter_id, user_id)
         )
         await db.commit()
 
-async def get_popular_queries(user_id: int, limit: int = 5) -> List[str]:
+async def set_default_cover_letter(letter_id: int, user_id: int):
+    async with aiosqlite.connect(DATABASE) as db:
+        await db.execute(
+            "UPDATE cover_letters SET is_default = 0 WHERE user_id = ?",
+            (user_id,)
+        )
+        await db.execute(
+            "UPDATE cover_letters SET is_default = 1 WHERE id = ? AND user_id = ?",
+            (letter_id, user_id)
+        )
+        await db.commit()
+
+async def get_default_cover_letter(user_id: int) -> Optional[dict]:
     async with aiosqlite.connect(DATABASE) as db:
         cursor = await db.execute(
-            """SELECT query, COUNT(*) as cnt FROM search_history 
-               WHERE user_id = ? GROUP BY query ORDER BY cnt DESC LIMIT ?""",
+            "SELECT id, name, text FROM cover_letters WHERE user_id = ? AND is_default = 1",
+            (user_id,)
+        )
+        row = await cursor.fetchone()
+        if row:
+            return {"id": row[0], "name": row[1], "text": row[2]}
+    return None
+
+
+# ==================== ОТКЛИКИ ====================
+
+async def add_application(user_id: int, vacancy_id: str, vacancy_name: str, employer: str):
+    async with aiosqlite.connect(DATABASE) as db:
+        await db.execute(
+            "INSERT INTO applications (user_id, vacancy_id, vacancy_name, employer) VALUES (?, ?, ?, ?)",
+            (user_id, vacancy_id, vacancy_name, employer)
+        )
+        await db.commit()
+
+async def get_applications(user_id: int, limit: int = 20) -> List[dict]:
+    async with aiosqlite.connect(DATABASE) as db:
+        cursor = await db.execute(
+            """SELECT vacancy_id, vacancy_name, employer, status, applied_at 
+               FROM applications WHERE user_id = ? ORDER BY applied_at DESC LIMIT ?""",
             (user_id, limit)
         )
         rows = await cursor.fetchall()
-        return [row[0] for row in rows]
+        return [
+            {
+                "vacancy_id": r[0],
+                "vacancy_name": r[1],
+                "employer": r[2],
+                "status": r[3],
+                "applied_at": r[4]
+            }
+            for r in rows
+        ]
+
+async def was_applied(user_id: int, vacancy_id: str) -> bool:
+    async with aiosqlite.connect(DATABASE) as db:
+        cursor = await db.execute(
+            "SELECT 1 FROM applications WHERE user_id = ? AND vacancy_id = ?",
+            (user_id, vacancy_id)
+        )
+        return await cursor.fetchone() is not None
