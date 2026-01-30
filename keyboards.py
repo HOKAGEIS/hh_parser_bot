@@ -829,4 +829,22 @@ def vacancy_nav_kb(
     
     return builder.as_markup()
 
+def admin_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")
+    )
+    return builder.as_markup()
+
+
+def admin_back_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back")
+    )
+    return builder.as_markup()
+
 
