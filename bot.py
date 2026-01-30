@@ -4,9 +4,10 @@ import subprocess
 import sys
 import aiosqlite
 
+try:
 except ImportError:
     subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'aiosqlite'])
-
+try:
     from dotenv import load_dotenv
 except ImportError:
     subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'python-dotenv'])
@@ -91,4 +92,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
