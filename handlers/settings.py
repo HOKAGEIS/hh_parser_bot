@@ -37,7 +37,7 @@ async def show_applications(message: Message):
     await message.answer(
         "📨 <b>Мои отклики</b>\n\n"
         "🚧 <i>Функция в разработке</i>\n\n"
-        "Для откликов на вакансии требуется интеграция с API HH.ru.\n"
+        "Для откликов требуется интеграция с API HH.ru.\n"
         "Следите за обновлениями!",
         reply_markup=kb.main_menu_kb(),
         parse_mode="HTML"
@@ -51,8 +51,7 @@ async def show_letters(message: Message):
     await message.answer(
         "✉️ <b>Сопроводительные письма</b>\n\n"
         "🚧 <i>Функция в разработке</i>\n\n"
-        "Скоро вы сможете создавать шаблоны писем "
-        "для быстрых откликов на вакансии.\n"
+        "Скоро вы сможете создавать шаблоны писем.\n"
         "Следите за обновлениями!",
         reply_markup=kb.main_menu_kb(),
         parse_mode="HTML"
@@ -77,11 +76,14 @@ async def show_support(message: Message):
 
 @router.callback_query(F.data == "settings_city")
 async def settings_city(callback: CallbackQuery):
-    await callback.message.edit_text(
-        "📍 <b>Выберите город:</b>",
-        reply_markup=kb.cities_kb(),
-        parse_mode="HTML"
-    )
+    try:
+        await callback.message.edit_text(
+            "📍 <b>Выберите город:</b>",
+            reply_markup=kb.cities_kb(),
+            parse_mode="HTML"
+        )
+    except Exception:
+        pass
     await callback.answer()
 
 
@@ -90,11 +92,7 @@ async def settings_salary_toggle(callback: CallbackQuery):
     user = await db.get_user(callback.from_user.id)
     new_value = not (user.only_with_salary if user else False)
     
-    await db.update_user_settings(
-        callback.from_user.id,
-        only_with_salary=new_value
-    )
-    
+    await db.update_user_settings(callback.from_user.id, only_with_salary=new_value)
     user = await db.get_user(callback.from_user.id)
     
     try:
@@ -116,16 +114,18 @@ async def settings_exclude(callback: CallbackQuery):
     
     text = "🚫 <b>Слова-исключения</b>\n\n"
     if words:
-        text += "Вакансии с этими словами не показываются:\n\n"
         text += ", ".join([f"<code>{w}</code>" for w in words])
     else:
         text += "Список пуст."
     
-    await callback.message.edit_text(
-        text,
-        reply_markup=kb.settings_exclude_kb(words),
-        parse_mode="HTML"
-    )
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=kb.settings_exclude_kb(words),
+            parse_mode="HTML"
+        )
+    except Exception:
+        pass
     await callback.answer()
 
 
@@ -133,12 +133,15 @@ async def settings_exclude(callback: CallbackQuery):
 async def settings_add_exclude(callback: CallbackQuery, state: FSMContext):
     await state.set_state(SettingsStates.adding_exclude_word)
     
-    await callback.message.edit_text(
-        "🚫 <b>Добавить слово-исключение</b>\n\n"
-        "Введите слово или фразу:\n\n"
-        "<i>Примеры: стажёр, junior, без опыта</i>",
-        parse_mode="HTML"
-    )
+    try:
+        await callback.message.edit_text(
+            "🚫 <b>Добавить слово-исключение</b>\n\n"
+            "Введите слово:\n\n"
+            "<i>Примеры: стажёр, junior, без опыта</i>",
+            parse_mode="HTML"
+        )
+    except Exception:
+        pass
     await callback.answer()
 
 
@@ -146,21 +149,17 @@ async def settings_add_exclude(callback: CallbackQuery, state: FSMContext):
 async def process_exclude_word(message: Message, state: FSMContext):
     word = message.text.strip().lower()
     
-    if len(word) < 2:
-        await message.answer("⚠️ Слишком короткое слово")
+    # Игнорируем кнопки меню
+    if message.text in config.MENU_BUTTONS:
+        await state.clear()
         return
     
-    if len(word) > 50:
-        await message.answer("⚠️ Слишком длинное (макс. 50 символов)")
+    if len(word) < 2:
+        await message.answer("⚠️ Слишком короткое")
         return
     
     user = await db.get_user(message.from_user.id)
     words = user.exclude_words if user else []
-    
-    if len(words) >= config.MAX_EXCLUDE_WORDS:
-        await message.answer(f"⚠️ Максимум {config.MAX_EXCLUDE_WORDS} слов")
-        await state.clear()
-        return
     
     if word not in words:
         words.append(word)
@@ -195,8 +194,7 @@ async def settings_remove_exclude(callback: CallbackQuery):
         )
     except Exception:
         pass
-    
-    await callback.answer(f"✅ Удалено: {word}")
+    await callback.answer(f"✅ Удалено")
 
 
 @router.callback_query(F.data == "settings_clear_exclude")
@@ -205,14 +203,12 @@ async def settings_clear_exclude(callback: CallbackQuery):
     
     try:
         await callback.message.edit_text(
-            "🚫 <b>Слова-исключения</b>\n\n"
-            "✅ Список очищен.",
+            "🚫 <b>Слова-исключения</b>\n\n✅ Очищено",
             reply_markup=kb.settings_exclude_kb([]),
             parse_mode="HTML"
         )
     except Exception:
         pass
-    
     await callback.answer("🗑 Очищено")
 
 
@@ -220,27 +216,21 @@ async def settings_clear_exclude(callback: CallbackQuery):
 async def settings_reset(callback: CallbackQuery):
     await db.update_user_settings(
         callback.from_user.id,
-        city=None,
-        city_name=None,
-        experience=None,
-        schedule=None,
-        min_salary=None,
-        only_with_salary=False,
-        exclude_words=[]
+        city=None, city_name=None, experience=None,
+        schedule=None, min_salary=None,
+        only_with_salary=False, exclude_words=[]
     )
     
     user = await db.get_user(callback.from_user.id)
     
     try:
         await callback.message.edit_text(
-            "⚙️ <b>Настройки</b>\n\n"
-            "✅ Сброшено!",
+            "⚙️ <b>Настройки</b>\n\n✅ Сброшено!",
             reply_markup=kb.settings_kb(user),
             parse_mode="HTML"
         )
     except Exception:
         pass
-    
     await callback.answer("🔄 Сброшено")
 
 
@@ -256,7 +246,6 @@ async def back_to_settings(callback: CallbackQuery):
         )
     except Exception:
         pass
-    
     await callback.answer()
 
 
@@ -267,7 +256,7 @@ async def show_analytics_prompt(message: Message, state: FSMContext):
     await state.set_state(SettingsStates.entering_analytics_query)
     await message.answer(
         "📊 <b>Аналитика зарплат</b>\n\n"
-        "Введите профессию для анализа:\n\n"
+        "Введите профессию:\n\n"
         "<i>Пример: Python разработчик</i>",
         parse_mode="HTML"
     )
@@ -277,31 +266,32 @@ async def show_analytics_prompt(message: Message, state: FSMContext):
 async def process_analytics_query(message: Message, state: FSMContext):
     query = message.text.strip()
     
+    # Игнорируем кнопки меню
+    if query in config.MENU_BUTTONS:
+        await state.clear()
+        return
+    
     await state.clear()
-    await message.answer("📊 Анализирую рынок...")
+    await message.answer("📊 Анализирую...")
     
     stats = await hh.get_salary_statistics(query)
     
     if stats.get("count", 0) == 0:
         await message.answer(
-            f"😔 По запросу «{query}» не найдено вакансий с зарплатой.",
+            f"😔 По запросу «{query}» вакансий с зарплатой не найдено.",
             reply_markup=kb.main_menu_kb()
         )
         return
     
     text = (
         f"📊 <b>Аналитика: {query}</b>\n\n"
-        f"📈 Всего вакансий: {stats['total_found']}\n"
-        f"💰 С указанной зарплатой: {stats['count']}\n\n"
+        f"📈 Всего: {stats['total_found']}\n"
+        f"💰 С зарплатой: {stats['count']}\n\n"
         f"<b>Зарплаты (₽):</b>\n"
-        f"├ Минимум: {stats['min']:,}\n"
-        f"├ Максимум: {stats['max']:,}\n"
+        f"├ Мин: {stats['min']:,}\n"
+        f"├ Макс: {stats['max']:,}\n"
         f"├ Средняя: {stats['avg']:,}\n"
         f"└ Медиана: {stats['median']:,}\n"
     ).replace(",", " ")
     
-    await message.answer(
-        text,
-        reply_markup=kb.main_menu_kb(),
-        parse_mode="HTML"
-    )
+    await message.answer(text, reply_markup=kb.main_menu_kb(), parse_mode="HTML")
