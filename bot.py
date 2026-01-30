@@ -10,30 +10,19 @@ from config import config
 import database as db
 import keyboards as kb
 
-# ... другие роутеры ...
-
-dp.include_router(admin.router)
-print("  ✅ admin.router подключен")
-
-# Подробное логирование
+# Логирование
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(name)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# ===== ПРОВЕРКА ТОКЕНА =====
-print("=" * 50)
-print(f"BOT_TOKEN: {config.BOT_TOKEN[:10]}...{config.BOT_TOKEN[-5:] if len(config.BOT_TOKEN) > 15 else 'КОРОТКИЙ'}")
-print(f"Token length: {len(config.BOT_TOKEN)}")
-print("=" * 50)
-
-if not config.BOT_TOKEN or config.BOT_TOKEN == "ВСТАВЬ_ТОКЕН" or "ВСТАВЬ" in config.BOT_TOKEN or len(config.BOT_TOKEN) < 40:
+# Проверка токена
+if not config.BOT_TOKEN or len(config.BOT_TOKEN) < 40:
     print("❌ ОШИБКА: Токен бота не настроен!")
-    print("Замените токен в config.py или переменных окружения")
     exit(1)
 
-# ===== ИНИЦИАЛИЗАЦИЯ =====
+# Инициализация бота и диспетчера
 bot = Bot(
     token=config.BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
@@ -45,8 +34,7 @@ dp = Dispatcher()
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
-    logger.info(f"✅ /start от {message.from_user.id} (@{message.from_user.username})")
-    print(f"✅ /start от {message.from_user.id} (@{message.from_user.username})")
+    logger.info(f"✅ /start от {message.from_user.id}")
     
     await db.create_user(message.from_user.id, message.from_user.username)
     
@@ -59,8 +47,7 @@ async def cmd_start(message: Message):
         "• 💰 Фильтр по зарплате\n"
         "• 🚫 Исключать ненужные вакансии\n"
         "• ⭐ Сохранять в избранное\n"
-        "• 📨 Откликаться на вакансии\n"
-        "• ✉️ Сопроводительные письма\n"
+        "• 🔔 Подписки на новые вакансии\n"
         "• 📊 Аналитика зарплат\n\n"
         "Выберите действие 👇",
         reply_markup=kb.main_menu_kb()
@@ -69,30 +56,42 @@ async def cmd_start(message: Message):
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
-    logger.info(f"✅ /help от {message.from_user.id}")
-    print(f"✅ /help от {message.from_user.id}")
-    
     await message.answer(
         "📚 <b>Справка</b>\n\n"
         "🔍 <b>Поиск</b> — поиск с фильтрами\n"
         "⭐ <b>Избранное</b> — сохранённые вакансии\n"
         "🔔 <b>Подписки</b> — уведомления о новых\n"
-        "📨 <b>Отклики</b> — история откликов\n"
-        "✉️ <b>Письма</b> — шаблоны сопроводительных\n"
         "📊 <b>Аналитика</b> — статистика зарплат\n"
-        "⚙️ <b>Настройки</b> — фильтры и HH.ru\n\n"
-        "<b>Фильтры:</b>\n"
-        "• Город — выбор или ввод вручную\n"
-        "• Зарплата — выбор или своя сумма\n"
-        "• Исключения — минус-слова",
+        "⚙️ <b>Настройки</b> — параметры поиска\n"
+        "💬 <b>Поддержка</b> — связь с нами",
         reply_markup=kb.main_menu_kb()
     )
 
 
-@dp.message(Command("test"))
-async def cmd_test(message: Message):
-    print(f"✅ /test от {message.from_user.id}")
-    await message.answer("✅ Бот работает корректно!")
+@dp.message(Command("admin"))
+async def cmd_admin(message: Message):
+    if message.from_user.id not in config.ADMIN_IDS:
+        await message.answer("❌ Нет доступа")
+        return
+    
+    import aiosqlite
+    async with aiosqlite.connect(db.DATABASE) as conn:
+        cursor = await conn.execute("SELECT COUNT(*) FROM users")
+        total_users = (await cursor.fetchone())[0]
+        
+        cursor = await conn.execute("SELECT COUNT(*) FROM subscriptions WHERE active = 1")
+        total_subs = (await cursor.fetchone())[0]
+        
+        cursor = await conn.execute("SELECT COUNT(*) FROM favorites")
+        total_favs = (await cursor.fetchone())[0]
+    
+    await message.answer(
+        "👑 <b>Админ-панель</b>\n\n"
+        f"👥 Пользователей: {total_users}\n"
+        f"🔔 Подписок: {total_subs}\n"
+        f"⭐ В избранном: {total_favs}",
+        reply_markup=kb.admin_kb()
+    )
 
 
 # ===== ЗАПУСК =====
@@ -101,102 +100,46 @@ async def main():
     # Инициализация БД
     try:
         await db.init_db()
-        print("✅ База данных инициализирована")
+        logger.info("✅ База данных инициализирована")
     except Exception as e:
-        print(f"❌ Ошибка БД: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"❌ Ошибка БД: {e}")
         return
     
     # Проверяем бота
     try:
         bot_info = await bot.get_me()
-        print(f"✅ Бот: @{bot_info.username} (ID: {bot_info.id})")
+        logger.info(f"✅ Бот: @{bot_info.username}")
     except Exception as e:
-        print(f"❌ Ошибка подключения к Telegram: {e}")
-        print("Проверьте токен бота!")
+        logger.error(f"❌ Ошибка подключения: {e}")
         return
     
-    # Удаляем webhook (ВАЖНО для polling!)
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-        print("✅ Webhook удалён, старые сообщения очищены")
-    except Exception as e:
-        print(f"⚠️ Ошибка удаления webhook: {e}")
+    # Удаляем webhook
+    await bot.delete_webhook(drop_pending_updates=True)
     
     # Подключаем роутеры
     try:
-        from handlers import search, favorites, subscriptions, settings, applications, cover_letters
+        from handlers import search, favorites, subscriptions, settings
         
         dp.include_router(search.router)
-        print("  ✅ search.router подключен")
-        
         dp.include_router(favorites.router)
-        print("  ✅ favorites.router подключен")
-        
         dp.include_router(subscriptions.router)
-        print("  ✅ subscriptions.router подключен")
-        
         dp.include_router(settings.router)
-        print("  ✅ settings.router подключен")
         
-        dp.include_router(applications.router)
-        print("  ✅ applications.router подключен")
-        
-        dp.include_router(cover_letters.router)
-        print("  ✅ cover_letters.router подключен")
-        
-        print("✅ Все роутеры подключены")
-        
-    except ImportError as e:
-        print(f"❌ Ошибка импорта роутера: {e}")
-        import traceback
-        traceback.print_exc()
-        return
+        logger.info("✅ Роутеры подключены")
     except Exception as e:
-        print(f"❌ Ошибка подключения роутеров: {e}")
+        logger.error(f"❌ Ошибка роутеров: {e}")
         import traceback
         traceback.print_exc()
         return
     
-    print("=" * 50)
-    print("🚀 БОТ УСПЕШНО ЗАПУЩЕН!")
-    print(f"👤 Username: @{bot_info.username}")
-    print("📨 Ожидаю сообщения...")
-    print("=" * 50)
+    logger.info("🚀 Бот запущен!")
     
-    # Запуск polling
-    try:
-        await dp.start_polling(
-            bot, 
-            allowed_updates=dp.resolve_used_update_types(),
-            drop_pending_updates=True
-        )
-    except Exception as e:
-        print(f"❌ Ошибка polling: {e}")
-        import traceback
-        traceback.print_exc()
+    # Запуск
+    await dp.start_polling(bot, drop_pending_updates=True)
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n👋 Бот остановлен")
-    except Exception as e:
-        print(f"❌ Критическая ошибка: {e}")
-        import traceback
-        traceback.print_exc()
-
-@dp.message(F.text == "💬 Поддержка")
-async def show_support(message: Message):
-    await message.answer(
-        "💬 <b>Техническая поддержка</b>\n\n"
-        "Если у вас возникли вопросы или проблемы:\n\n"
-        "📩 Напишите: @YOUR_USERNAME\n"  # Замени на свой username
-        "📧 Email: support@example.com",
-        parse_mode="HTML"
-    )
-
-
-
+        print("👋 Бот остановлен")
