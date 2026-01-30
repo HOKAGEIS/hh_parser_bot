@@ -1,247 +1,184 @@
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
+import asyncio
+import logging
+from aiogram import Bot, Dispatcher
+from aiogram.types import Message
+from aiogram.filters import Command, CommandStart
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
 
+from config import config
 import database as db
 import keyboards as kb
-from hh_api import hh
 
-router = Router()
+# Подробное логирование
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
+# ===== ПРОВЕРКА ТОКЕНА =====
+print("=" * 50)
+print(f"BOT_TOKEN: {config.BOT_TOKEN[:10]}...{config.BOT_TOKEN[-5:] if len(config.BOT_TOKEN) > 15 else 'КОРОТКИЙ'}")
+print(f"Token length: {len(config.BOT_TOKEN)}")
+print("=" * 50)
 
-class ApplyStates(StatesGroup):
-    writing_letter = State()
-    selecting_resume = State()
+if not config.BOT_TOKEN or config.BOT_TOKEN == "ВСТАВЬ_ТОКЕН" or "ВСТАВЬ" in config.BOT_TOKEN or len(config.BOT_TOKEN) < 40:
+    print("❌ ОШИБКА: Токен бота не настроен!")
+    print("Замените токен в config.py или переменных окружения")
+    exit(1)
 
-
-@router.message(F.text == "📨 Мои отклики")
-async def show_applications(message: Message):
-    applications = await db.get_applications(message.from_user.id)
-    
-    if not applications:
-        await message.answer(
-            "📨 <b>Мои отклики</b>\n\n"
-            "У вас пока нет откликов.\n\n"
-            "Чтобы откликаться на вакансии:\n"
-            "1. Подключите аккаунт HH.ru в ⚙️ Настройки\n"
-            "2. Найдите вакансию\n"
-            "3. Нажмите «Откликнуться»",
-            parse_mode="HTML"
-        )
-        return
-    
-    text = "📨 <b>Мои отклики</b>\n\n"
-    for app in applications[:15]:
-        text += f"• <b>{app['vacancy_name'][:40]}</b>\n"
-        text += f"  🏢 {app['employer']}\n"
-        text += f"  📅 {app['applied_at'][:10]}\n\n"
-    
-    await message.answer(text, parse_mode="HTML")
+# ===== ИНИЦИАЛИЗАЦИЯ =====
+bot = Bot(
+    token=config.BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
+dp = Dispatcher()
 
 
-@router.callback_query(F.data.startswith("apply_"))
-async def start_apply(callback: CallbackQuery, state: FSMContext):
-    vacancy_id = callback.data.replace("apply_", "")
-    
-    user = await db.get_user(callback.from_user.id)
-    
-    if not user or not user.hh_access_token:
-        await callback.answer(
-            "⚠️ Подключите аккаунт HH.ru в настройках",
-            show_alert=True
-        )
-        return
-    
-    # Получаем резюме
-    resumes = await hh.get_my_resumes(user.hh_access_token)
-    
-    if not resumes:
-        await callback.answer(
-            "⚠️ У вас нет резюме на HH.ru",
-            show_alert=True
-        )
-        return
-    
-    await state.update_data(vacancy_id=vacancy_id, resumes=resumes)
-    
-    # Получаем шаблоны писем
-    letters = await db.get_cover_letters(callback.from_user.id)
-    
-    await callback.message.edit_text(
-        "📨 <b>Отклик на вакансию</b>\n\n"
-        "Выберите способ отправки:",
-        reply_markup=kb.apply_kb(vacancy_id, letters),
-        parse_mode="HTML"
-    )
-    await callback.answer()
+# ===== ОСНОВНЫЕ КОМАНДЫ =====
 
-
-@router.callback_query(F.data.startswith("apply_template_"))
-async def show_templates(callback: CallbackQuery, state: FSMContext):
-    vacancy_id = callback.data.replace("apply_template_", "")
+@dp.message(CommandStart())
+async def cmd_start(message: Message):
+    logger.info(f"✅ /start от {message.from_user.id} (@{message.from_user.username})")
+    print(f"✅ /start от {message.from_user.id} (@{message.from_user.username})")
     
-    letters = await db.get_cover_letters(callback.from_user.id)
-    
-    await callback.message.edit_text(
-        "📝 <b>Выберите шаблон письма:</b>",
-        reply_markup=kb.letter_templates_kb(vacancy_id, letters),
-        parse_mode="HTML"
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("apply_write_"))
-async def write_letter(callback: CallbackQuery, state: FSMContext):
-    vacancy_id = callback.data.replace("apply_write_", "")
-    
-    await state.update_data(vacancy_id=vacancy_id)
-    await state.set_state(ApplyStates.writing_letter)
-    
-    await callback.message.edit_text(
-        "✏️ <b>Напишите сопроводительное письмо:</b>\n\n"
-        "<i>Расскажите о себе и почему вы подходите на эту позицию</i>",
-        parse_mode="HTML"
-    )
-    await callback.answer()
-
-
-@router.message(ApplyStates.writing_letter)
-async def process_letter(message: Message, state: FSMContext):
-    letter_text = message.text.strip()
-    
-    if len(letter_text) < 10:
-        await message.answer("⚠️ Письмо слишком короткое")
-        return
-    
-    await state.update_data(letter=letter_text)
-    data = await state.get_data()
-    
-    # Показываем выбор резюме
-    resumes = data.get("resumes", [])
-    vacancy_id = data.get("vacancy_id")
-    
-    await state.set_state(ApplyStates.selecting_resume)
+    await db.create_user(message.from_user.id, message.from_user.username)
     
     await message.answer(
-        "📄 <b>Выберите резюме:</b>",
-        reply_markup=kb.resumes_kb(resumes, vacancy_id),
-        parse_mode="HTML"
+        f"👋 Привет, <b>{message.from_user.first_name}</b>!\n\n"
+        "Я бот для поиска вакансий на <b>hh.ru</b> 🔍\n\n"
+        "<b>Что я умею:</b>\n"
+        "• 🔍 Искать вакансии с фильтрами\n"
+        "• 📍 Поиск по любому городу\n"
+        "• 💰 Фильтр по зарплате\n"
+        "• 🚫 Исключать ненужные вакансии\n"
+        "• ⭐ Сохранять в избранное\n"
+        "• 📨 Откликаться на вакансии\n"
+        "• ✉️ Сопроводительные письма\n"
+        "• 📊 Аналитика зарплат\n\n"
+        "Выберите действие 👇",
+        reply_markup=kb.main_menu_kb()
     )
 
 
-@router.callback_query(F.data.startswith("apply_now_"))
-async def apply_now(callback: CallbackQuery, state: FSMContext):
-    parts = callback.data.replace("apply_now_", "").split("_")
-    vacancy_id = parts[0]
-    letter_type = parts[1] if len(parts) > 1 else "none"
+@dp.message(Command("help"))
+async def cmd_help(message: Message):
+    logger.info(f"✅ /help от {message.from_user.id}")
+    print(f"✅ /help от {message.from_user.id}")
     
-    data = await state.get_data()
-    resumes = data.get("resumes", [])
-    
-    if not resumes:
-        user = await db.get_user(callback.from_user.id)
-        resumes = await hh.get_my_resumes(user.hh_access_token)
-        await state.update_data(resumes=resumes)
-    
-    await state.update_data(vacancy_id=vacancy_id, letter="" if letter_type == "none" else data.get("letter", ""))
-    await state.set_state(ApplyStates.selecting_resume)
-    
-    await callback.message.edit_text(
-        "📄 <b>Выберите резюме для отклика:</b>",
-        reply_markup=kb.resumes_kb(resumes, vacancy_id),
-        parse_mode="HTML"
+    await message.answer(
+        "📚 <b>Справка</b>\n\n"
+        "🔍 <b>Поиск</b> — поиск с фильтрами\n"
+        "⭐ <b>Избранное</b> — сохранённые вакансии\n"
+        "🔔 <b>Подписки</b> — уведомления о новых\n"
+        "📨 <b>Отклики</b> — история откликов\n"
+        "✉️ <b>Письма</b> — шаблоны сопроводительных\n"
+        "📊 <b>Аналитика</b> — статистика зарплат\n"
+        "⚙️ <b>Настройки</b> — фильтры и HH.ru\n\n"
+        "<b>Фильтры:</b>\n"
+        "• Город — выбор или ввод вручную\n"
+        "• Зарплата — выбор или своя сумма\n"
+        "• Исключения — минус-слова",
+        reply_markup=kb.main_menu_kb()
     )
-    await callback.answer()
 
 
-@router.callback_query(F.data.startswith("use_letter_"))
-async def use_letter_template(callback: CallbackQuery, state: FSMContext):
-    parts = callback.data.replace("use_letter_", "").split("_")
-    vacancy_id = parts[0]
-    letter_id = int(parts[1])
-    
-    letter = await db.get_cover_letter(letter_id, callback.from_user.id)
-    
-    if letter:
-        await state.update_data(letter=letter["text"], vacancy_id=vacancy_id)
-    
-    data = await state.get_data()
-    resumes = data.get("resumes", [])
-    
-    if not resumes:
-        user = await db.get_user(callback.from_user.id)
-        resumes = await hh.get_my_resumes(user.hh_access_token)
-        await state.update_data(resumes=resumes)
-    
-    await state.set_state(ApplyStates.selecting_resume)
-    
-    await callback.message.edit_text(
-        f"✅ Письмо: <b>{letter['name']}</b>\n\n"
-        "📄 <b>Выберите резюме:</b>",
-        reply_markup=kb.resumes_kb(resumes, vacancy_id),
-        parse_mode="HTML"
-    )
-    await callback.answer()
+@dp.message(Command("test"))
+async def cmd_test(message: Message):
+    print(f"✅ /test от {message.from_user.id}")
+    await message.answer("✅ Бот работает корректно!")
 
 
-@router.callback_query(F.data.startswith("resume_"))
-async def select_resume_and_apply(callback: CallbackQuery, state: FSMContext):
-    parts = callback.data.replace("resume_", "").split("_")
-    vacancy_id = parts[0]
-    resume_id = parts[1]
-    
-    data = await state.get_data()
-    letter = data.get("letter", "")
-    
-    user = await db.get_user(callback.from_user.id)
-    
-    if not user or not user.hh_access_token:
-        await callback.answer("⚠️ Ошибка авторизации", show_alert=True)
+# ===== ЗАПУСК =====
+
+async def main():
+    # Инициализация БД
+    try:
+        await db.init_db()
+        print("✅ База данных инициализирована")
+    except Exception as e:
+        print(f"❌ Ошибка БД: {e}")
+        import traceback
+        traceback.print_exc()
         return
     
-    await callback.message.edit_text("📨 Отправляю отклик...")
+    # Проверяем бота
+    try:
+        bot_info = await bot.get_me()
+        print(f"✅ Бот: @{bot_info.username} (ID: {bot_info.id})")
+    except Exception as e:
+        print(f"❌ Ошибка подключения к Telegram: {e}")
+        print("Проверьте токен бота!")
+        return
     
-    # Отправляем отклик
-    result = await hh.apply_to_vacancy(
-        vacancy_id=vacancy_id,
-        resume_id=resume_id,
-        access_token=user.hh_access_token,
-        message=letter
-    )
+    # Удаляем webhook (ВАЖНО для polling!)
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        print("✅ Webhook удалён, старые сообщения очищены")
+    except Exception as e:
+        print(f"⚠️ Ошибка удаления webhook: {e}")
     
-    if result.get("status") in [200, 201, 303]:
-        # Сохраняем в историю
-        vacancies = data.get("vacancies", [])
-        vacancy_name = "Вакансия"
-        employer = "Компания"
-        for v in vacancies:
-            if v.get("id") == vacancy_id:
-                vacancy_name = v.get("name", "Вакансия")
-                employer = v.get("employer", "Компания")
-                break
+    # Подключаем роутеры
+    try:
+        from handlers import search, favorites, subscriptions, settings, applications, cover_letters
         
-        await db.add_application(callback.from_user.id, vacancy_id, vacancy_name, employer)
+        dp.include_router(search.router)
+        print("  ✅ search.router подключен")
         
-        await callback.message.edit_text(
-            "✅ <b>Отклик отправлен!</b>\n\n"
-            "Работодатель увидит ваше резюме и сопроводительное письмо.\n\n"
-            "Удачи! 🍀",
-            parse_mode="HTML"
-        )
-    else:
-        error_text = result.get("data", "Неизвестная ошибка")
-        await callback.message.edit_text(
-            f"❌ <b>Ошибка при отправке</b>\n\n"
-            f"Возможно, вы уже откликались на эту вакансию.\n\n"
-            f"<code>{error_text[:200]}</code>",
-            parse_mode="HTML"
-        )
+        dp.include_router(favorites.router)
+        print("  ✅ favorites.router подключен")
+        
+        dp.include_router(subscriptions.router)
+        print("  ✅ subscriptions.router подключен")
+        
+        dp.include_router(settings.router)
+        print("  ✅ settings.router подключен")
+        
+        dp.include_router(applications.router)
+        print("  ✅ applications.router подключен")
+        
+        dp.include_router(cover_letters.router)
+        print("  ✅ cover_letters.router подключен")
+        
+        print("✅ Все роутеры подключены")
+        
+    except ImportError as e:
+        print(f"❌ Ошибка импорта роутера: {e}")
+        import traceback
+        traceback.print_exc()
+        return
+    except Exception as e:
+        print(f"❌ Ошибка подключения роутеров: {e}")
+        import traceback
+        traceback.print_exc()
+        return
     
-    await state.clear()
-    await callback.answer()
+    print("=" * 50)
+    print("🚀 БОТ УСПЕШНО ЗАПУЩЕН!")
+    print(f"👤 Username: @{bot_info.username}")
+    print("📨 Ожидаю сообщения...")
+    print("=" * 50)
+    
+    # Запуск polling
+    try:
+        await dp.start_polling(
+            bot, 
+            allowed_updates=dp.resolve_used_update_types(),
+            drop_pending_updates=True
+        )
+    except Exception as e:
+        print(f"❌ Ошибка polling: {e}")
+        import traceback
+        traceback.print_exc()
 
 
-@router.callback_query(F.data == "already_applied")
-async def already_applied(callback: CallbackQuery):
-    await callback.answer("✅ Вы уже откликнулись на эту вакансию", show_alert=True)
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n👋 Бот остановлен")
+    except Exception as e:
+        print(f"❌ Критическая ошибка: {e}")
+        import traceback
+        traceback.print_exc()
