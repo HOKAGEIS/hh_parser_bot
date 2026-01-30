@@ -1,2 +1,4 @@
-aiogram==3.7.0
-aiosqlite==0.19.0
+aiogram
+python-dotenv
+requests
+aiosqlite
