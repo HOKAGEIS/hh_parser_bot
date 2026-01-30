@@ -201,6 +201,29 @@ class HHApi:
         data = await self._request("/suggests/areas", {"text": city_name})
         if data and "items" in data:
             return data["items"]
+
+        async def get_user_stats(self, access_token: str) -> dict:
+    """Получить статистику пользователя"""
+    stats = {}
+    
+    # Получаем резюме со статистикой
+    resumes = await self.get_my_resumes(access_token)
+    
+    total_views = 0
+    for resume in resumes:
+        resume_id = resume.get("id")
+        if resume_id:
+            # Получаем детальную статистику резюме
+            detail = await self._request(
+                f"/resumes/{resume_id}/stats",
+                access_token=access_token
+            )
+            if detail and "views" in detail:
+                total_views += detail.get("views", 0)
+    
+    stats["total_resume_views"] = total_views
+    
+    return stats
         
         # Альтернативный поиск через areas
         all_areas = await self._request("/areas")
@@ -425,3 +448,4 @@ class HHApi:
 
 # Глобальный экземпляр
 hh = HHApi()
+
