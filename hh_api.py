@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from config import config
 import re
 
+
 @dataclass
 class Vacancy:
     id: str
@@ -21,7 +22,7 @@ class Vacancy:
     employment: str
     requirement: Optional[str]
     responsibility: Optional[str]
-    description: Optional[str]  # Полное описание
+    description: Optional[str]
     key_skills: List[str]
     published_at: str
     has_test: bool
@@ -43,7 +44,6 @@ class Vacancy:
             return f"💰 до {self.salary_to:,} {symbol}".replace(",", " ")
     
     def to_short_message(self) -> str:
-        """Краткое сообщение для списка"""
         req = self.requirement or ""
         req = self._clean_html(req)
         if len(req) > 150:
@@ -61,15 +61,11 @@ class Vacancy:
         )
     
     def to_full_message(self) -> str:
-        """Полное описание вакансии"""
         desc = self._clean_html(self.description or "Описание не указано")
         if len(desc) > 3000:
             desc = desc[:3000] + "...\n\n<i>Полное описание на hh.ru</i>"
         
         skills = ", ".join(self.key_skills[:10]) if self.key_skills else "Не указаны"
-        
-        letter_req = "✅ Требуется" if self.response_letter_required else "❌ Не обязательно"
-        test_req = "✅ Есть" if self.has_test else "❌ Нет"
         
         return (
             f"📌 <b>{self.name}</b>\n\n"
@@ -79,25 +75,20 @@ class Vacancy:
             f"📋 <b>Опыт:</b> {self.experience}\n"
             f"⏰ <b>График:</b> {self.schedule}\n"
             f"💼 <b>Занятость:</b> {self.employment}\n\n"
-            f"🛠 <b>Ключевые навыки:</b>\n{skills}\n\n"
+            f"🛠 <b>Навыки:</b>\n{skills}\n\n"
             f"📝 <b>Описание:</b>\n{desc}\n\n"
-            f"✉️ <b>Сопроводительное:</b> {letter_req}\n"
-            f"📝 <b>Тестовое задание:</b> {test_req}\n\n"
             f"🔗 <a href='{self.url}'>Открыть на hh.ru</a>"
         )
     
     def _clean_html(self, text: str) -> str:
-        """Очистка HTML тегов"""
         if not text:
             return ""
-        # Заменяем теги на переносы
         text = re.sub(r'<br\s*/?>', '\n', text)
         text = re.sub(r'<p>', '\n', text)
         text = re.sub(r'</p>', '', text)
         text = re.sub(r'<li>', '\n• ', text)
         text = re.sub(r'</li>', '', text)
         text = re.sub(r'<[^>]+>', '', text)
-        # Убираем лишние пробелы и переносы
         text = re.sub(r'\n{3,}', '\n\n', text)
         text = re.sub(r'<highlighttext>', '', text)
         text = re.sub(r'</highlighttext>', '', text)
@@ -113,7 +104,6 @@ class HHApi:
     
     async def _request(self, endpoint: str, params: dict = None, method: str = "GET", 
                        data: dict = None, access_token: str = None) -> dict:
-        """Базовый запрос к API"""
         headers = self.headers.copy()
         if access_token:
             headers["Authorization"] = f"Bearer {access_token}"
@@ -150,9 +140,7 @@ class HHApi:
         page: int = 0,
         per_page: int = 5
     ) -> tuple[List[Vacancy], int]:
-        """Поиск вакансий с исключениями"""
         
-        # Формируем запрос с исключениями
         search_text = text
         if exclude_words:
             exclude_str = " ".join([f"NOT {word}" for word in exclude_words])
@@ -190,7 +178,6 @@ class HHApi:
         return vacancies, total
     
     async def get_vacancy_full(self, vacancy_id: str) -> Optional[Vacancy]:
-        """Получить полную информацию о вакансии"""
         data = await self._request(f"/vacancies/{vacancy_id}")
         if data and "error" not in data:
             return self._parse_vacancy_full(data)
@@ -201,34 +188,7 @@ class HHApi:
         data = await self._request("/suggests/areas", {"text": city_name})
         if data and "items" in data:
             return data["items"]
-
-            async def get_negotiations(self, access_token: str) -> List[dict]:
-        """Получить список откликов"""
-        data = await self._request("/negotiations", access_token=access_token)
-        if data and "items" in data:
-            return data["items"]
-        return []
-
-    async def get_user_stats(self, access_token: str) -> dict:
-        """Получить статистику пользователя"""
-        stats = {}
-        resumes = await self.get_my_resumes(access_token)
         
-        total_views = 0
-        for resume in resumes:
-            resume_id = resume.get("id")
-            if resume_id:
-                detail = await self._request(
-                    f"/resumes/{resume_id}/stats",
-                    access_token=access_token
-                )
-                if detail and "views" in detail:
-                    total_views += detail.get("views", 0)
-        
-        stats["total_resume_views"] = total_views
-        return stats
-        
-        # Альтернативный поиск через areas
         all_areas = await self._request("/areas")
         results = []
         
@@ -253,7 +213,6 @@ class HHApi:
         area: str = None,
         exclude_words: List[str] = None
     ) -> Dict[str, Any]:
-        """Статистика зарплат"""
         
         search_text = text
         if exclude_words:
@@ -297,90 +256,7 @@ class HHApi:
             "median": int(sorted(salaries)[len(salaries) // 2]),
         }
     
-    # ==================== ОТКЛИКИ ====================
-    
-    def get_auth_url(self, state: str = "") -> str:
-        """Получить URL для авторизации пользователя"""
-        return (
-            f"https://hh.ru/oauth/authorize"
-            f"?response_type=code"
-            f"&client_id={config.HH_CLIENT_ID}"
-            f"&redirect_uri={config.HH_REDIRECT_URI}"
-            f"&state={state}"
-        )
-    
-    async def get_access_token(self, code: str) -> Optional[dict]:
-        """Получить токен по коду авторизации"""
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://hh.ru/oauth/token",
-                data={
-                    "grant_type": "authorization_code",
-                    "client_id": config.HH_CLIENT_ID,
-                    "client_secret": config.HH_CLIENT_SECRET,
-                    "code": code,
-                    "redirect_uri": config.HH_REDIRECT_URI,
-                }
-            ) as response:
-                if response.status == 200:
-                    return await response.json()
-        return None
-    
-    async def refresh_token(self, refresh_token: str) -> Optional[dict]:
-        """Обновить токен"""
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://hh.ru/oauth/token",
-                data={
-                    "grant_type": "refresh_token",
-                    "refresh_token": refresh_token,
-                }
-            ) as response:
-                if response.status == 200:
-                    return await response.json()
-        return None
-    
-    async def get_my_resumes(self, access_token: str) -> List[dict]:
-        """Получить резюме пользователя"""
-        data = await self._request("/resumes/mine", access_token=access_token)
-        if data and "items" in data:
-            return data["items"]
-        return []
-    
-    async def apply_to_vacancy(
-        self,
-        vacancy_id: str,
-        resume_id: str,
-        access_token: str,
-        message: str = ""
-    ) -> dict:
-        """Откликнуться на вакансию"""
-        params = {
-            "vacancy_id": vacancy_id,
-            "resume_id": resume_id,
-        }
-        if message:
-            params["message"] = message
-        
-        result = await self._request(
-            "/negotiations",
-            params=params,
-            method="POST",
-            access_token=access_token
-        )
-        return result
-    
-    async def get_negotiations(self, access_token: str) -> List[dict]:
-        """Получить список откликов"""
-        data = await self._request("/negotiations", access_token=access_token)
-        if data and "items" in data:
-            return data["items"]
-        return []
-    
-    # ==================== ПАРСИНГ ====================
-    
     def _parse_vacancy(self, data: dict) -> Vacancy:
-        """Парсинг вакансии из списка"""
         salary = data.get("salary") or {}
         employer = data.get("employer") or {}
         address = data.get("address") or {}
@@ -414,7 +290,6 @@ class HHApi:
         )
     
     def _parse_vacancy_full(self, data: dict) -> Vacancy:
-        """Парсинг полной вакансии"""
         salary = data.get("salary") or {}
         employer = data.get("employer") or {}
         address = data.get("address") or {}
@@ -449,7 +324,4 @@ class HHApi:
         )
 
 
-# Глобальный экземпляр
 hh = HHApi()
-
-
