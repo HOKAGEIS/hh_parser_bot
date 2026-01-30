@@ -548,3 +548,137 @@ def back_kb(callback_data: str = "cancel") -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="❌ Отмена", callback_data=callback_data)
     )
     return builder.as_markup()
+# ==================== НАСТРОЙКИ HH ====================
+
+def hh_connect_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_settings")
+    )
+    return builder.as_markup()
+
+
+def settings_exclude_kb(words: List[str]) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    
+    builder.row(
+        InlineKeyboardButton(text="➕ Добавить слово", callback_data="settings_add_exclude")
+    )
+    
+    for word in words[:10]:
+        builder.row(
+            InlineKeyboardButton(
+                text=f"❌ {word}",
+                callback_data=f"settings_remove_exclude_{word}"
+            )
+        )
+    
+    if words:
+        builder.row(
+            InlineKeyboardButton(text="🗑 Очистить всё", callback_data="settings_clear_exclude")
+        )
+    
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_settings")
+    )
+    
+    return builder.as_markup()
+
+
+# ==================== ПОДПИСКИ ====================
+
+def subscriptions_list_kb(subs: list) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    
+    builder.row(
+        InlineKeyboardButton(text="➕ Новая подписка", callback_data="new_subscription")
+    )
+    
+    for sub in subs[:10]:
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{'🟢' if sub.active else '🔴'} {sub.query[:30]}",
+                callback_data=f"sub_{sub.id}"
+            )
+        )
+    
+    return builder.as_markup()
+
+
+def subscription_item_kb(sub_id: int, is_active: bool) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    
+    if is_active:
+        builder.row(
+            InlineKeyboardButton(text="⏸ Приостановить", callback_data=f"pause_sub_{sub_id}")
+        )
+    else:
+        builder.row(
+            InlineKeyboardButton(text="▶️ Возобновить", callback_data=f"resume_sub_{sub_id}")
+        )
+    
+    builder.row(
+        InlineKeyboardButton(text="🔄 Проверить сейчас", callback_data=f"check_sub_{sub_id}")
+    )
+    
+    builder.row(
+        InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delete_sub_{sub_id}")
+    )
+    
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_subs")
+    )
+    
+    return builder.as_markup()
+
+
+# ==================== ИЗБРАННОЕ ====================
+
+def favorites_list_kb(favorites: list) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    
+    for fav in favorites[:15]:
+        name = fav.vacancy_data.get("name", "Вакансия")[:35]
+        builder.row(
+            InlineKeyboardButton(
+                text=f"📌 {name}",
+                callback_data=f"show_fav_{fav.vacancy_id}"
+            )
+        )
+    
+    if favorites:
+        builder.row(
+            InlineKeyboardButton(text="🗑 Очистить всё", callback_data="clear_favorites")
+        )
+    
+    return builder.as_markup()
+
+
+def favorite_item_kb(vacancy_id: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    
+    builder.row(
+        InlineKeyboardButton(text="💔 Удалить", callback_data=f"del_fav_{vacancy_id}")
+    )
+    
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_favorites")
+    )
+    
+# ==================== ТЕХ.ПОДДЕРЖКА ====================
+
+def support_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    
+    builder.row(
+        InlineKeyboardButton(
+            text="💬 Написать в поддержку",
+            url="https://t.me/YOUR_SUPPORT_USERNAME"  # Замени на свой username
+        )
+    )
+    
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_settings")
+    )
+    
+    return builder.as_markup()
