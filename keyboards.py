@@ -674,15 +674,15 @@ def support_kb() -> InlineKeyboardMarkup:
 
 def admin_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    
     builder.row(
-        InlineKeyboardButton(text="📊 Детальная статистика", callback_data="admin_stats")
+        InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📬 Обращения", callback_data="admin_tickets")
     )
     builder.row(
         InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")
     )
-    
-    
     return builder.as_markup()
 
 
@@ -923,4 +923,5 @@ def admin_back_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back")
     )
     return builder.as_markup()
+
 
