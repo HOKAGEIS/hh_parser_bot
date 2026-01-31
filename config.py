@@ -1,4 +1,4 @@
-# config.py - полный файл с всеми необходимыми настройками
+# config.py - исправленный файл
 import os
 from dotenv import load_dotenv
 
@@ -7,7 +7,7 @@ load_dotenv()
 class Config:
     # Основные настройки
     BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-    HH_API_BASE_URL = os.getenv('HH_API_BASE_URL', 'https://api.hh.ru')
+    HH_API_BASE_URL = os.getenv('HH_API_BASE_URL', 'https://api.hh.ru ')
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
     DATABASE_PATH = os.getenv('DATABASE_PATH', 'vacancies.db')
     
@@ -57,6 +57,51 @@ class Config:
     WEBHOOK_PATH = os.getenv('WEBHOOK_PATH', '/webhook')
     WEBHOOK_PORT = int(os.getenv('WEBHOOK_PORT', '8080'))
     
+    # Кнопки главного меню
+    MENU_BUTTONS = [
+        "🔍 Поиск вакансий",
+        "⭐ Избранное",
+        "🔔 Подписки",
+        "📊 Аналитика",
+        "🕐 История поиска",
+        "⚙️ Настройки",
+        "💬 Поддержка",
+        "👑 Админ-панель",
+        "❌ Отмена",
+        "⬅️ Назад"
+    ]
+    
+    # Популярные города
+    POPULAR_CITIES = {
+        "1": "Москва",
+        "2": "Санкт-Петербург",
+        "3": "Новосибирск",
+        "4": "Екатеринбург",
+        "5": "Казань",
+        "6": "Нижний Новгород",
+        "7": "Челябинск",
+        "8": "Самара",
+        "9": "Омск",
+        "10": "Ростов-на-Дону"
+    }
+    
+    # Опыт работы
+    EXPERIENCE = {
+        "noExperience": "Нет опыта",
+        "between1And3": "От 1 года до 3 лет",
+        "between3And6": "От 3 до 6 лет",
+        "moreThan6": "Более 6 лет"
+    }
+    
+    # График работы
+    SCHEDULE = {
+        "fullDay": "Полный день",
+        "shift": "Сменный график",
+        "flexible": "Гибкий график",
+        "remote": "Удаленная работа",
+        "partTime": "Неполный рабочий день"
+    }
+    
     @classmethod
     def validate(cls):
         """Проверка обязательных настроек"""
@@ -80,4 +125,3 @@ Config.validate()
 
 # Экспорт
 __all__ = ['Config', 'config']
-
