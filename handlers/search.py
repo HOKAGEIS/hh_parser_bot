@@ -199,18 +199,31 @@ async def process_search_query(message: Message, state: FSMContext):
         salary=user.min_salary if user else None,
         only_with_salary=user.only_with_salary if user else False,
         exclude_words=user.exclude_words if user else [],
-        # кеш для пагинации/показа
         current_index=0,
         total=0,
         per_page=config.VACANCIES_PER_PAGE,
         cache_page=None,
         cache_vacancies=[],
-        # варианты городов (id -> name) при ручном поиске
         city_variants={},
     )
     await state.set_state(None)
 
+    # ✅ сохраняем в историю
     data = await state.get_data()
+    await db.add_search_history(
+        user_id=message.from_user.id,
+        query=query,
+        city=data.get("city"),
+        city_name=data.get("city_name"),
+        filters={
+            "experience": data.get("experience"),
+            "schedule": data.get("schedule"),
+            "salary": data.get("salary"),
+            "only_with_salary": data.get("only_with_salary"),
+            "exclude_words": data.get("exclude_words"),
+        },
+    )
+
     await message.answer(
         f"🔍 Запрос: <b>{query}</b>\n\n"
         "Настройте фильтры или сразу начните поиск:",
@@ -931,3 +944,89 @@ async def unknown_callback_in_results(callback: CallbackQuery):
 @router.message(SearchStates.viewing_results)
 async def unknown_message_in_results(message: Message, state: FSMContext):
     await message.answer("Используйте кнопки навигации под вакансией или нажмите ❌ Закрыть.")
+
+# ==================== ИСТОРИЯ ПОИСКА (кнопка меню) ====================
+
+@router.message(F.text == "🕐 История поиска")
+async def show_search_history_menu(message: Message, state: FSMContext):
+    await state.clear()
+    history = await db.get_search_history(message.from_user.id, limit=10)
+
+    text = "🕐 <b>История поиска</b>\n\n"
+    text += "Выберите запрос:" if history else "История пуста."
+
+    await message.answer(
+        text,
+        reply_markup=kb.search_history_kb(history),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "history_empty")
+async def history_empty(callback: CallbackQuery):
+    await callback.answer("История пуста", show_alert=True)
+
+
+@router.callback_query(F.data == "clear_history")
+async def clear_history(callback: CallbackQuery):
+    await db.clear_search_history(callback.from_user.id)
+
+    await callback.message.edit_text(
+        "🕐 <b>История поиска</b>\n\n✅ История очищена.",
+        reply_markup=kb.search_history_kb([]),
+        parse_mode="HTML",
+    )
+    await callback.answer("🗑 Очищено")
+
+
+@router.callback_query(F.data.startswith("repeat_search_"))
+async def repeat_search_from_history(callback: CallbackQuery, state: FSMContext):
+    idx_str = callback.data.replace("repeat_search_", "", 1)
+    try:
+        idx = int(idx_str)
+    except ValueError:
+        await callback.answer("Ошибка", show_alert=True)
+        return
+
+    history = await db.get_search_history(callback.from_user.id, limit=10)
+    if idx < 0 or idx >= len(history):
+        await callback.answer("Запрос не найден", show_alert=True)
+        return
+
+    item = history[idx]
+    query = (item.get("query") or "").strip()
+    if not query:
+        await callback.answer("Пустой запрос", show_alert=True)
+        return
+
+    user = await db.get_user(callback.from_user.id)
+    filters = item.get("filters") or {}
+
+    await state.clear()
+    await state.update_data(
+        query=query,
+        city=item.get("city") or (user.default_city if user else None),
+        city_name=item.get("city_name") or (user.default_city_name if user else None),
+        experience=filters.get("experience") or (user.default_experience if user else None),
+        schedule=filters.get("schedule") or (user.default_schedule if user else None),
+        salary=filters.get("salary") or (user.min_salary if user else None),
+        only_with_salary=filters.get("only_with_salary") if "only_with_salary" in filters else (user.only_with_salary if user else False),
+        exclude_words=filters.get("exclude_words") or (user.exclude_words if user else []),
+        current_index=0,
+        total=0,
+        per_page=config.VACANCIES_PER_PAGE,
+        cache_page=None,
+        cache_vacancies=[],
+        city_variants={},
+    )
+    await state.set_state(None)
+
+    data = await state.get_data()
+    await callback.message.edit_text(
+        f"🔍 Запрос: <b>{query}</b>\n\n"
+        "Настройте фильтры или сразу начните поиск:",
+        reply_markup=kb.filters_kb(data),
+        parse_mode="HTML",
+    )
+    await callback.answer("✅ Загружено")
+
