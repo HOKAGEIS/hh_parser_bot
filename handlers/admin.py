@@ -51,6 +51,34 @@ async def admin_panel(message: Message):
         parse_mode="HTML"
     )
 
+@router.message(F.text == "👑 Админ-панель")
+async def admin_panel_button(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Нет доступа")
+        return
+    
+    async with aiosqlite.connect(db.DATABASE) as conn:
+        cursor = await conn.execute("SELECT COUNT(*) FROM users")
+        total_users = (await cursor.fetchone())[0]
+        
+        cursor = await conn.execute("SELECT COUNT(*) FROM subscriptions WHERE active = 1")
+        total_subs = (await cursor.fetchone())[0]
+        
+        cursor = await conn.execute("SELECT COUNT(*) FROM favorites")
+        total_favs = (await cursor.fetchone())[0]
+        
+        cursor = await conn.execute("SELECT COUNT(*) FROM tickets WHERE status = 'open'")
+        open_tickets = (await cursor.fetchone())[0]
+    
+    await message.answer(
+        "👑 <b>Админ-панель</b>\n\n"
+        f"👥 Пользователей: {total_users}\n"
+        f"🔔 Подписок: {total_subs}\n"
+        f"⭐ В избранном: {total_favs}\n"
+        f"📬 Открытых тикетов: {open_tickets}",
+        reply_markup=kb.admin_kb(),
+        parse_mode="HTML"
+    )
 
 # ==================== СТАТИСТИКА ====================
 
