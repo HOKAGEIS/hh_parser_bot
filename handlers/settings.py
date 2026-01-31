@@ -58,19 +58,6 @@ async def show_letters(message: Message):
     )
 
 
-# ==================== ПОДДЕРЖКА ====================
-
-@router.message(F.text == "💬 Поддержка")
-async def show_support(message: Message):
-    await message.answer(
-        "💬 <b>Техническая поддержка</b>\n\n"
-        "Если возникли вопросы или проблемы:\n\n"
-        f"📩 Напишите: @{config.SUPPORT_USERNAME}\n\n"
-        "<i>Обычно отвечаем в течение 24 часов</i>",
-        reply_markup=kb.main_menu_kb(),
-        parse_mode="HTML"
-    )
-
 
 # ==================== ГОРОД ====================
 
@@ -295,3 +282,4 @@ async def process_analytics_query(message: Message, state: FSMContext):
     ).replace(",", " ")
     
     await message.answer(text, reply_markup=kb.main_menu_kb(), parse_mode="HTML")
+
