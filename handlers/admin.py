@@ -4,11 +4,11 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-import sqlite3  # Заменен aiosqlite на sqlite3
+import sqlite3
 
 import database as db
 import keyboards as kb
-from config import Config  # Заменено config на Config
+from config import Config
 
 router = Router()
 
@@ -18,7 +18,7 @@ class AdminStates(StatesGroup):
 
 
 def is_admin(user_id: int) -> bool:
-    return user_id in Config.ADMIN_IDS  # Заменено config на Config
+    return user_id in Config.ADMIN_IDS
 
 
 # ==================== ПАНЕЛЬ ====================
@@ -29,19 +29,19 @@ async def admin_panel(message: Message):
         await message.answer("❌ Нет доступа")
         return
     
-    conn = sqlite3.connect(db.Config.DATABASE_PATH)  # Заменено db.DATABASE на db.Config.DATABASE_PATH
+    conn = sqlite3.connect(db.Config.DATABASE_PATH)
     cursor = conn.cursor()
     
     cursor.execute("SELECT COUNT(*) FROM users")
     total_users = cursor.fetchone()[0]
     
-    cursor.execute("SELECT COUNT(*) FROM subscriptions WHERE is_active = 1")  # Заменено active на is_active
+    cursor.execute("SELECT COUNT(*) FROM subscriptions WHERE is_active = 1")
     total_subs = cursor.fetchone()[0]
     
     cursor.execute("SELECT COUNT(*) FROM favorites")
     total_favs = cursor.fetchone()[0]
     
-    cursor.execute("SELECT COUNT(*) FROM tickets WHERE status = 'open'")  # Предполагается наличие таблицы tickets
+    cursor.execute("SELECT COUNT(*) FROM tickets WHERE status = 'open'")
     open_tickets = cursor.fetchone()[0]
     
     conn.close()
@@ -62,19 +62,19 @@ async def admin_panel_button(message: Message):
         await message.answer("❌ Нет доступа")
         return
     
-    conn = sqlite3.connect(db.Config.DATABASE_PATH)  # Заменено db.DATABASE на db.Config.DATABASE_PATH
+    conn = sqlite3.connect(db.Config.DATABASE_PATH)
     cursor = conn.cursor()
     
     cursor.execute("SELECT COUNT(*) FROM users")
     total_users = cursor.fetchone()[0]
     
-    cursor.execute("SELECT COUNT(*) FROM subscriptions WHERE is_active = 1")  # Заменено active на is_active
+    cursor.execute("SELECT COUNT(*) FROM subscriptions WHERE is_active = 1")
     total_subs = cursor.fetchone()[0]
     
     cursor.execute("SELECT COUNT(*) FROM favorites")
     total_favs = cursor.fetchone()[0]
     
-    cursor.execute("SELECT COUNT(*) FROM tickets WHERE status = 'open'")  # Предполагается наличие таблицы tickets
+    cursor.execute("SELECT COUNT(*) FROM tickets WHERE status = 'open'")
     open_tickets = cursor.fetchone()[0]
     
     conn.close()
@@ -97,7 +97,7 @@ async def admin_stats(callback: CallbackQuery):
         await callback.answer("❌ Нет доступа")
         return
     
-    conn = sqlite3.connect(db.Config.DATABASE_PATH)  # Заменено db.DATABASE на db.Config.DATABASE_PATH
+    conn = sqlite3.connect(db.Config.DATABASE_PATH)
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -173,17 +173,15 @@ async def process_broadcast(message: Message, state: FSMContext, bot: Bot):
         await state.clear()
         return
     
-    # Игнорируем команды
     if message.text and message.text.startswith("/"):
         return
     
     await state.clear()
     
-    # Получаем пользователей
-    conn = sqlite3.connect(db.Config.DATABASE_PATH)  # Заменено db.DATABASE на db.Config.DATABASE_PATH
+    conn = sqlite3.connect(db.Config.DATABASE_PATH)
     cursor = conn.cursor()
     
-    cursor.execute("SELECT user_id FROM users")  # Исправлено: id -> user_id
+    cursor.execute("SELECT user_id FROM users")
     users = cursor.fetchall()
     
     conn.close()
@@ -218,7 +216,7 @@ async def admin_tickets(callback: CallbackQuery):
         await callback.answer("❌ Нет доступа")
         return
     
-    tickets = db.get_all_open_tickets()  # Убран await
+    tickets = await db.get_all_open_tickets()  # Добавлен await
     
     if not tickets:
         try:
@@ -253,13 +251,13 @@ async def admin_view_ticket(callback: CallbackQuery):
         return
     
     ticket_id = int(callback.data.replace("admin_view_ticket_", ""))
-    ticket = db.get_ticket_by_id(ticket_id)  # Убран await
+    ticket = await db.get_ticket_by_id(ticket_id)  # Добавлен await
     
     if not ticket:
         await callback.answer("Тикет не найден")
         return
     
-    messages = db.get_ticket_messages(ticket_id)  # Убран await
+    messages = await db.get_ticket_messages(ticket_id)  # Добавлен await
     
     username = f"@{ticket['username']}" if ticket['username'] else f"ID: {ticket['user_id']}"
     text = f"📬 <b>Тикет #{ticket_id}</b>\n👤 {username}\n\n"
@@ -286,7 +284,6 @@ async def admin_reply_start(callback: CallbackQuery, state: FSMContext):
     
     ticket_id = int(callback.data.replace("admin_reply_", ""))
     
-    # Импортируем состояние из support
     from handlers.support import SupportStates
     
     await state.update_data(reply_ticket_id=ticket_id)
@@ -308,9 +305,9 @@ async def admin_close_ticket(callback: CallbackQuery, bot: Bot):
         return
     
     ticket_id = int(callback.data.replace("admin_close_ticket_", ""))
-    ticket = db.get_ticket_by_id(ticket_id)  # Убран await
+    ticket = await db.get_ticket_by_id(ticket_id)  # Добавлен await
     
-    db.close_ticket(ticket_id)  # Убран await
+    await db.close_ticket(ticket_id)  # Добавлен await
     
     try:
         await callback.message.edit_text(
@@ -321,7 +318,6 @@ async def admin_close_ticket(callback: CallbackQuery, bot: Bot):
     except Exception:
         pass
     
-    # Уведомляем пользователя
     if ticket:
         try:
             await bot.send_message(
@@ -342,13 +338,13 @@ async def admin_back(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         return
     
-    conn = sqlite3.connect(db.Config.DATABASE_PATH)  # Заменено db.DATABASE на db.Config.DATABASE_PATH
+    conn = sqlite3.connect(db.Config.DATABASE_PATH)
     cursor = conn.cursor()
     
     cursor.execute("SELECT COUNT(*) FROM users")
     total_users = cursor.fetchone()[0]
     
-    cursor.execute("SELECT COUNT(*) FROM tickets WHERE status = 'open'")  # Предполагается наличие таблицы tickets
+    cursor.execute("SELECT COUNT(*) FROM tickets WHERE status = 'open'")
     open_tickets = cursor.fetchone()[0]
     
     conn.close()
