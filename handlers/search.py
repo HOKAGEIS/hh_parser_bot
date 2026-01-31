@@ -773,6 +773,9 @@ async def change_page(callback: CallbackQuery, state: FSMContext):
 
 # ==================== ПОЛНОЕ ОПИСАНИЕ ====================
 
+import logging
+log = logging.getLogger(__name__)
+
 @router.callback_query(F.data.startswith("full_"))
 async def show_full_vacancy(callback: CallbackQuery, state: FSMContext):
     vacancy_id = callback.data.replace("full_", "", 1)
@@ -785,10 +788,34 @@ async def show_full_vacancy(callback: CallbackQuery, state: FSMContext):
         return
 
     user = await db.get_user(callback.from_user.id)
-    is_authorized = bool(user and user.hh_access_token)
+    is_authorized = bool(user and getattr(user, "hh_access_token", None))
     is_applied = await db.was_applied(callback.from_user.id, vacancy_id)
 
-    text = vacancy.to_full_message()
+    # 1) Если hh.get_vacancy_full вернул dict/что-то не то — не падаем
+    if not hasattr(vacancy, "to_full_message"):
+        log.error("get_vacancy_full(%s) returned %s: %r", vacancy_id, type(vacancy), vacancy)
+        await _safe_edit_text(
+            callback.message,
+            "❌ Ошибка формата данных вакансии (нет to_full_message).\n\n"
+            "Попробуйте позже или откройте вакансию на hh.ru.",
+            reply_markup=kb.vacancy_full_kb(vacancy_id, is_authorized, is_applied),
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    # 2) Если внутри to_full_message что-то упало — тоже не падаем
+    try:
+        text = vacancy.to_full_message()
+    except Exception as e:
+        log.exception("to_full_message failed for vacancy_id=%s: %s", vacancy_id, e)
+        # фолбек на короткое сообщение
+        if hasattr(vacancy, "to_short_message"):
+            text = "⚠️ Полное описание временно недоступно.\n\n" + vacancy.to_short_message()
+        else:
+            text = "⚠️ Полное описание временно недоступно."
+
     if len(text) > 4000:
         text = text[:4000] + "\n\n<i>...текст обрезан. Откройте на hh.ru для полной версии</i>"
 
@@ -800,31 +827,6 @@ async def show_full_vacancy(callback: CallbackQuery, state: FSMContext):
         disable_web_page_preview=True,
     )
     await callback.answer()
-
-
-@router.callback_query(F.data == "back_to_list")
-async def back_to_list(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    total = int(data.get("total") or 0)
-    current_index = int(data.get("current_index") or 0)
-
-    if total <= 0:
-        await _safe_edit_text(callback.message, "Нет результатов поиска")
-        await callback.answer()
-        return
-
-    vacancy, total2 = await _get_vacancy_at_index(state, current_index)
-    if not vacancy:
-        await _safe_edit_text(callback.message, "Нет результатов поиска")
-        await callback.answer()
-        return
-
-    user = await db.get_user(callback.from_user.id)
-    is_authorized = bool(user and user.hh_access_token)
-
-    await show_vacancy_message(callback.message, vacancy, current_index, total2, callback.from_user.id, is_authorized)
-    await callback.answer()
-
 
 # ==================== ИЗБРАННОЕ ====================
 
@@ -1029,4 +1031,5 @@ async def repeat_search_from_history(callback: CallbackQuery, state: FSMContext)
         parse_mode="HTML",
     )
     await callback.answer("✅ Загружено")
+
 
