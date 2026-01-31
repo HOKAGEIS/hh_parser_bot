@@ -51,6 +51,9 @@ async def process_search_query(message: Message, state: FSMContext):
         await message.answer("⚠️ Запрос слишком короткий. Минимум 2 символа.")
         return
     
+    # ДОБАВЬ ЭТУ СТРОКУ:
+    user = await db.get_user(message.from_user.id)
+    
     await state.update_data(
         query=query,
         city=user.default_city if user else None,
@@ -71,7 +74,6 @@ async def process_search_query(message: Message, state: FSMContext):
         reply_markup=kb.filters_kb(data),
         parse_mode="HTML"
     )
-
 
 # ==================== ФИЛЬТРЫ ====================
 
@@ -806,6 +808,7 @@ async def vacancy_info(callback: CallbackQuery, state: FSMContext):
         f"Найдено: {total} вакансий\nЗагружено: {loaded}",
         show_alert=True
     )
+
 
 
 
