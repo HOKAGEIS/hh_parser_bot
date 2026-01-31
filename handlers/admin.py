@@ -1,13 +1,14 @@
+# handlers/admin.py (исправленный код)
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-import aiosqlite
+import sqlite3  # Заменен aiosqlite на sqlite3
 
 import database as db
 import keyboards as kb
-from config import config
+from config import Config  # Заменено config на Config
 
 router = Router()
 
@@ -17,7 +18,7 @@ class AdminStates(StatesGroup):
 
 
 def is_admin(user_id: int) -> bool:
-    return user_id in config.ADMIN_IDS
+    return user_id in Config.ADMIN_IDS  # Заменено config на Config
 
 
 # ==================== ПАНЕЛЬ ====================
@@ -28,18 +29,22 @@ async def admin_panel(message: Message):
         await message.answer("❌ Нет доступа")
         return
     
-    async with aiosqlite.connect(db.DATABASE) as conn:
-        cursor = await conn.execute("SELECT COUNT(*) FROM users")
-        total_users = (await cursor.fetchone())[0]
-        
-        cursor = await conn.execute("SELECT COUNT(*) FROM subscriptions WHERE active = 1")
-        total_subs = (await cursor.fetchone())[0]
-        
-        cursor = await conn.execute("SELECT COUNT(*) FROM favorites")
-        total_favs = (await cursor.fetchone())[0]
-        
-        cursor = await conn.execute("SELECT COUNT(*) FROM tickets WHERE status = 'open'")
-        open_tickets = (await cursor.fetchone())[0]
+    conn = sqlite3.connect(db.Config.DATABASE_PATH)  # Заменено db.DATABASE на db.Config.DATABASE_PATH
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT COUNT(*) FROM users")
+    total_users = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM subscriptions WHERE is_active = 1")  # Заменено active на is_active
+    total_subs = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM favorites")
+    total_favs = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM tickets WHERE status = 'open'")  # Предполагается наличие таблицы tickets
+    open_tickets = cursor.fetchone()[0]
+    
+    conn.close()
     
     await message.answer(
         "👑 <b>Админ-панель</b>\n\n"
@@ -57,18 +62,22 @@ async def admin_panel_button(message: Message):
         await message.answer("❌ Нет доступа")
         return
     
-    async with aiosqlite.connect(db.DATABASE) as conn:
-        cursor = await conn.execute("SELECT COUNT(*) FROM users")
-        total_users = (await cursor.fetchone())[0]
-        
-        cursor = await conn.execute("SELECT COUNT(*) FROM subscriptions WHERE active = 1")
-        total_subs = (await cursor.fetchone())[0]
-        
-        cursor = await conn.execute("SELECT COUNT(*) FROM favorites")
-        total_favs = (await cursor.fetchone())[0]
-        
-        cursor = await conn.execute("SELECT COUNT(*) FROM tickets WHERE status = 'open'")
-        open_tickets = (await cursor.fetchone())[0]
+    conn = sqlite3.connect(db.Config.DATABASE_PATH)  # Заменено db.DATABASE на db.Config.DATABASE_PATH
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT COUNT(*) FROM users")
+    total_users = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM subscriptions WHERE is_active = 1")  # Заменено active на is_active
+    total_subs = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM favorites")
+    total_favs = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM tickets WHERE status = 'open'")  # Предполагается наличие таблицы tickets
+    open_tickets = cursor.fetchone()[0]
+    
+    conn.close()
     
     await message.answer(
         "👑 <b>Админ-панель</b>\n\n"
@@ -88,18 +97,22 @@ async def admin_stats(callback: CallbackQuery):
         await callback.answer("❌ Нет доступа")
         return
     
-    async with aiosqlite.connect(db.DATABASE) as conn:
-        cursor = await conn.execute("""
-            SELECT DATE(created_at), COUNT(*) 
-            FROM users 
-            GROUP BY DATE(created_at) 
-            ORDER BY DATE(created_at) DESC 
-            LIMIT 7
-        """)
-        daily = await cursor.fetchall()
-        
-        cursor = await conn.execute("SELECT COUNT(*) FROM users")
-        total = (await cursor.fetchone())[0]
+    conn = sqlite3.connect(db.Config.DATABASE_PATH)  # Заменено db.DATABASE на db.Config.DATABASE_PATH
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT DATE(created_at), COUNT(*) 
+        FROM users 
+        GROUP BY DATE(created_at) 
+        ORDER BY DATE(created_at) DESC 
+        LIMIT 7
+    """)
+    daily = cursor.fetchall()
+    
+    cursor.execute("SELECT COUNT(*) FROM users")
+    total = cursor.fetchone()[0]
+    
+    conn.close()
     
     text = "📊 <b>Статистика</b>\n\n"
     text += f"👥 Всего пользователей: {total}\n\n"
@@ -167,9 +180,13 @@ async def process_broadcast(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
     
     # Получаем пользователей
-    async with aiosqlite.connect(db.DATABASE) as conn:
-        cursor = await conn.execute("SELECT id FROM users")
-        users = await cursor.fetchall()
+    conn = sqlite3.connect(db.Config.DATABASE_PATH)  # Заменено db.DATABASE на db.Config.DATABASE_PATH
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT id FROM users")
+    users = cursor.fetchall()
+    
+    conn.close()
     
     status_msg = await message.answer(f"📤 Рассылка {len(users)} пользователям...")
     
@@ -201,7 +218,7 @@ async def admin_tickets(callback: CallbackQuery):
         await callback.answer("❌ Нет доступа")
         return
     
-    tickets = await db.get_all_open_tickets()
+    tickets = db.get_all_open_tickets()  # Убран await
     
     if not tickets:
         try:
@@ -236,13 +253,13 @@ async def admin_view_ticket(callback: CallbackQuery):
         return
     
     ticket_id = int(callback.data.replace("admin_view_ticket_", ""))
-    ticket = await db.get_ticket_by_id(ticket_id)
+    ticket = db.get_ticket_by_id(ticket_id)  # Убран await
     
     if not ticket:
         await callback.answer("Тикет не найден")
         return
     
-    messages = await db.get_ticket_messages(ticket_id)
+    messages = db.get_ticket_messages(ticket_id)  # Убран await
     
     username = f"@{ticket['username']}" if ticket['username'] else f"ID: {ticket['user_id']}"
     text = f"📬 <b>Тикет #{ticket_id}</b>\n👤 {username}\n\n"
@@ -291,9 +308,9 @@ async def admin_close_ticket(callback: CallbackQuery, bot: Bot):
         return
     
     ticket_id = int(callback.data.replace("admin_close_ticket_", ""))
-    ticket = await db.get_ticket_by_id(ticket_id)
+    ticket = db.get_ticket_by_id(ticket_id)  # Убран await
     
-    await db.close_ticket(ticket_id)
+    db.close_ticket(ticket_id)  # Убран await
     
     try:
         await callback.message.edit_text(
@@ -325,12 +342,16 @@ async def admin_back(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         return
     
-    async with aiosqlite.connect(db.DATABASE) as conn:
-        cursor = await conn.execute("SELECT COUNT(*) FROM users")
-        total_users = (await cursor.fetchone())[0]
-        
-        cursor = await conn.execute("SELECT COUNT(*) FROM tickets WHERE status = 'open'")
-        open_tickets = (await cursor.fetchone())[0]
+    conn = sqlite3.connect(db.Config.DATABASE_PATH)  # Заменено db.DATABASE на db.Config.DATABASE_PATH
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT COUNT(*) FROM users")
+    total_users = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM tickets WHERE status = 'open'")  # Предполагается наличие таблицы tickets
+    open_tickets = cursor.fetchone()[0]
+    
+    conn.close()
     
     try:
         await callback.message.edit_text(
