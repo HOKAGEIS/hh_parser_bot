@@ -1,9 +1,4 @@
-# keyboards.py (исправленная версия под исправленный search_router.py)
-# Ключевые изменения:
-# - Убраны опасные callback_data с текстом (город/слова-исключения) -> теперь только id/индексы
-# - filters_kb приведён к тем фильтрам, которые реально обрабатываются в search_router
-# - vacancy_kb/vacancy_full_kb сигнатуры совпадают с вызовами из search_router
-
+# keyboards.py (исправленный код)
 from typing import List, Optional, Any, Dict
 
 from aiogram.types import (
@@ -200,7 +195,7 @@ def search_history_kb(history: List[dict]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     if not history:
-        builder.row(InlineKeyboardButton(text="📭 История пуста", callback_data="history_empty"))
+        builder.row(InlineKeyboardButton(text="ostringstream", callback_data="history_empty"))
     else:
         for i, item in enumerate(history[:10]):
             query = (item.get("query", "") or "")[:25]
@@ -221,15 +216,15 @@ def search_history_kb(history: List[dict]) -> InlineKeyboardMarkup:
 def vacancy_kb(
     vacancy_id: str,
     is_fav: bool,
-    page: int,
-    total_pages: int,
+    current_index: int,
+    total: int,
     is_applied: bool = False,
     is_authorized: bool = False,
 ) -> InlineKeyboardMarkup:
     """
     В исправленном search_router:
-    - page = глобальный индекс вакансии (0..total-1)
-    - total_pages = total (общее число вакансий)
+    - current_index = глобальный индекс вакансии (0..total-1)
+    - total = общее число вакансий
     """
     builder = InlineKeyboardBuilder()
 
@@ -241,17 +236,17 @@ def vacancy_kb(
         builder.row(InlineKeyboardButton(text="⭐ В избранное", callback_data=f"fav_{vacancy_id}"))
 
     # Навигация (по индексам)
-    total = max(int(total_pages or 0), 0)
+    total = max(int(total or 0), 0)
     nav: List[InlineKeyboardButton] = []
 
     if total <= 0:
         nav.append(InlineKeyboardButton(text="1/1", callback_data="page_info"))
     else:
-        if page > 0:
-            nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"page_{page - 1}"))
-        nav.append(InlineKeyboardButton(text=f"{page + 1}/{total}", callback_data="page_info"))
-        if page < total - 1:
-            nav.append(InlineKeyboardButton(text="➡️", callback_data=f"page_{page + 1}"))
+        if current_index > 0:
+            nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"page_{current_index - 1}"))
+        nav.append(InlineKeyboardButton(text=f"{current_index + 1}/{total}", callback_data="page_info"))
+        if current_index < total - 1:
+            nav.append(InlineKeyboardButton(text="➡️", callback_data=f"page_{current_index + 1}"))
 
     builder.row(*nav)
 
@@ -283,8 +278,8 @@ def favorites_list_kb(favorites: list) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     for fav in favorites[:15]:
-        name = (fav.vacancy_data.get("name", "Вакансия") if fav.vacancy_data else "Вакансия")[:30]
-        builder.row(InlineKeyboardButton(text=f"📌 {name}", callback_data=f"show_fav_{fav.vacancy_id}"))
+        name = (fav.get("vacancy_data", {}).get("name", "Вакансия"))[:30]
+        builder.row(InlineKeyboardButton(text=f"📌 {name}", callback_data=f"show_fav_{fav.get('vacancy_id')}"))
 
     if favorites:
         builder.row(InlineKeyboardButton(text="🗑 Очистить", callback_data="clear_favorites"))
@@ -307,8 +302,8 @@ def subscriptions_list_kb(subs: list) -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text="➕ Новая подписка", callback_data="new_subscription"))
 
     for sub in subs[:10]:
-        status = "🟢" if sub.active else "🔴"
-        builder.row(InlineKeyboardButton(text=f"{status} {sub.query[:25]}", callback_data=f"sub_{sub.id}"))
+        status = "🟢" if getattr(sub, 'active', False) else "🔴"
+        builder.row(InlineKeyboardButton(text=f"{status} {getattr(sub, 'query', '')[:25]}", callback_data=f"sub_{getattr(sub, 'id', 0)}"))
 
     return builder.as_markup()
 
@@ -332,13 +327,13 @@ def subscription_item_kb(sub_id: int, is_active: bool) -> InlineKeyboardMarkup:
 def settings_kb(user) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
-    city = user.default_city_name if user and user.default_city_name else "Не выбран"
+    city = user.get('city_name', 'Не выбран') if isinstance(user, dict) else (getattr(user, 'default_city_name', 'Не выбран') if user and hasattr(user, 'default_city_name') else 'Не выбран')
     builder.row(InlineKeyboardButton(text=f"📍 Город: {city}", callback_data="settings_city"))
 
-    salary_status = "✅" if user and user.only_with_salary else "❌"
+    salary_status = "✅" if (isinstance(user, dict) and user.get('only_with_salary')) or (hasattr(user, 'only_with_salary') and getattr(user, 'only_with_salary', False)) else "❌"
     builder.row(InlineKeyboardButton(text=f"💰 Только с зарплатой: {salary_status}", callback_data="settings_salary_toggle"))
 
-    exclude_count = len(user.exclude_words) if user and user.exclude_words else 0
+    exclude_count = len(user.get('exclude_words', [])) if isinstance(user, dict) else len(getattr(user, 'exclude_words', [])) if hasattr(user, 'exclude_words') else 0
     builder.row(InlineKeyboardButton(text=f"🚫 Слова-исключения ({exclude_count})", callback_data="settings_exclude"))
 
     builder.row(InlineKeyboardButton(text="🔔 Автоуведомления", callback_data="settings_notifications"))
@@ -403,7 +398,7 @@ def admin_tickets_list_kb(tickets: list) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     for t in tickets[:10]:
-        username = t["username"] or t["user_id"]
+        username = t.get("username") or t.get("user_id")
         builder.row(
             InlineKeyboardButton(
                 text=f"#{t['id']} — {username}",
@@ -427,6 +422,3 @@ def admin_back_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back"))
     return builder.as_markup()
-
-
-
