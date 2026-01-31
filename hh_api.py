@@ -75,12 +75,10 @@ class Vacancy:
         return text.strip()
 
 
-# hh_api.py (строки около 75-85)
 class HHApi:
     """Класс для работы с API HeadHunter"""
     
     def __init__(self):
-        # ВСЕ строки внутри функции должны иметь отступ 4 пробела (или 1 tab)
         self.base_url = config.HH_API_BASE_URL
         self.session = None
         self.headers = {
@@ -91,12 +89,34 @@ class HHApi:
     async def create_session(self):
         """Создание aiohttp сессии"""
         if not self.session:
-            self.session = aiohttp.ClientSession()
+            self.session = aiohttp.ClientSession(headers=self.headers)
     
     async def close_session(self):
         """Закрытие сессии"""
         if self.session:
             await self.session.close()
+            self.session = None
+    
+    async def _request(self, endpoint: str, params: dict = None) -> Optional[dict]:
+        """Выполнение HTTP запроса к API"""
+        if not self.session:
+            await self.create_session()
+        
+        url = f"{self.base_url}{endpoint}"
+        
+        try:
+            async with self.session.get(url, params=params, timeout=10) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                else:
+                    print(f"Error: {resp.status} for {url}")
+                    return None
+        except aiohttp.ClientError as e:
+            print(f"Request error: {e}")
+            return None
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            return None
     
     async def search_vacancies(
         self,
@@ -110,7 +130,6 @@ class HHApi:
         exclude_words: List[str] = None,
         page: int = 0,
         per_page: int = 20,
-        # Новые фильтры
         search_period: int = None,
         search_field: str = None,
         label: List[str] = None,
@@ -122,7 +141,6 @@ class HHApi:
         exclude_agency: bool = False,
     ) -> tuple[List[Vacancy], int]:
         
-        # Формируем запрос с исключениями
         search_text = text
         if exclude_words:
             exclude_str = " ".join([f"NOT {word}" for word in exclude_words])
@@ -135,7 +153,6 @@ class HHApi:
             "order_by": "publication_time",
         }
         
-        # Основные фильтры
         if area:
             params["area"] = area
         if experience:
@@ -149,19 +166,15 @@ class HHApi:
         if only_with_salary:
             params["only_with_salary"] = "true"
         
-        # Период публикации
         if search_period and search_period > 0:
             params["search_period"] = search_period
         
-        # Искать в
         if search_field:
             params["search_field"] = search_field
         
-        # Образование
         if education:
             params["education"] = education
         
-        # Специальные метки
         labels = []
         if accept_kids:
             labels.append("accept_kids")
@@ -179,7 +192,6 @@ class HHApi:
         
         vacancies = []
         for item in data.get("items", []):
-            # Фильтрация после получения
             if with_address and not item.get("address"):
                 continue
             if exclude_agency:
@@ -326,6 +338,5 @@ class HHApi:
         return vacancy
 
 
+# Создаём экземпляр API
 hh = HHApi()
-
-
