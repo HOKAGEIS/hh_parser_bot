@@ -182,12 +182,11 @@ def education_kb() -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="filter_advanced"))
     return builder.as_markup()
 
-
 def cities_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     
     builder.row(InlineKeyboardButton(text="🌍 Любой город", callback_data="set_city_any"))
-    builder.row(InlineKeyboardButton(text="📍 Определить автоматически", callback_data="detect_city"))
+    builder.row(InlineKeyboardButton(text="📍 Отправить геолокацию", callback_data="request_location"))
     builder.row(InlineKeyboardButton(text="✏️ Ввести вручную", callback_data="enter_city_manual"))
     
     for city_id, city_name in list(config.POPULAR_CITIES.items())[:6]:
@@ -195,6 +194,14 @@ def cities_kb() -> InlineKeyboardMarkup:
     
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_filters"))
     return builder.as_markup()
+
+
+def location_request_kb() -> ReplyKeyboardMarkup:
+    """Клавиатура для запроса геолокации"""
+    builder = ReplyKeyboardBuilder()
+    builder.row(KeyboardButton(text="📍 Отправить местоположение", request_location=True))
+    builder.row(KeyboardButton(text="❌ Отмена"))
+    return builder.as_markup(resize_keyboard=True, one_time_keyboard=True)
 
 
 def experience_kb() -> InlineKeyboardMarkup:
@@ -451,4 +458,5 @@ def admin_back_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back"))
     return builder.as_markup()
+
 
