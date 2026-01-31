@@ -47,7 +47,7 @@ def main_menu_kb(user_id: int = None) -> ReplyKeyboardMarkup:
     )
     builder.row(KeyboardButton(text="💬 Поддержка"))
 
-    if user_id and user_id in config.ADMIN_IDS:
+    if user_id and user_id in Config.ADMIN_IDS:
         builder.row(KeyboardButton(text="👑 Админ-панель"))
 
     return builder.as_markup(resize_keyboard=True)
@@ -68,11 +68,11 @@ def filters_kb(data: dict) -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text=f"💰 Зарплата: {salary_text}", callback_data="filter_salary"))
 
     # Опыт
-    exp = config.EXPERIENCE.get(data.get("experience"), "Любой")
+    exp = Config.EXPERIENCE.get(data.get("experience"), "Любой")
     builder.row(InlineKeyboardButton(text=f"💼 Опыт: {exp}", callback_data="filter_experience"))
 
     # График
-    schedule = config.SCHEDULE.get(data.get("schedule"), "Любой")
+    schedule = Config.SCHEDULE.get(data.get("schedule"), "Любой")
     builder.row(InlineKeyboardButton(text=f"⏰ График: {schedule}", callback_data="filter_schedule"))
 
     # Исключения
@@ -102,7 +102,7 @@ def cities_kb() -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text="✏️ Ввести вручную", callback_data="enter_city_manual"))
 
     # ВАЖНО: callback_data только с id, без названия города
-    for city_id, city_name in list(config.POPULAR_CITIES.items())[:6]:
+    for city_id, city_name in list(Config.POPULAR_CITIES.items())[:6]:
         builder.row(InlineKeyboardButton(text=f"📍 {city_name}", callback_data=f"set_city_{city_id}"))
 
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_filters"))
@@ -140,7 +140,7 @@ def experience_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="💼 Любой опыт", callback_data="set_exp_any"))
 
-    for exp_id, exp_name in config.EXPERIENCE.items():
+    for exp_id, exp_name in Config.EXPERIENCE.items():
         builder.row(InlineKeyboardButton(text=f"💼 {exp_name}", callback_data=f"set_exp_{exp_id}"))
 
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_filters"))
@@ -151,7 +151,7 @@ def schedule_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="⏰ Любой график", callback_data="set_schedule_any"))
 
-    for sch_id, sch_name in config.SCHEDULE.items():
+    for sch_id, sch_name in Config.SCHEDULE.items():
         builder.row(InlineKeyboardButton(text=f"⏰ {sch_name}", callback_data=f"set_schedule_{sch_id}"))
 
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_filters"))
@@ -427,4 +427,5 @@ def admin_back_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back"))
     return builder.as_markup()
+
 
