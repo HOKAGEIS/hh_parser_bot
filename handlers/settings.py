@@ -283,4 +283,35 @@ async def process_analytics_query(message: Message, state: FSMContext):
     
     await message.answer(text, reply_markup=kb.main_menu_kb(), parse_mode="HTML")
 
+# Добавь в handlers/settings.py
+
+@router.callback_query(F.data == "settings_notifications")
+async def settings_notifications(callback: CallbackQuery):
+    user = await db.get_user(callback.from_user.id)
+    enabled = user.notifications_enabled if user else True
+    
+    await callback.message.edit_text(
+        "🔔 <b>Автоуведомления</b>\n\n"
+        "Бот будет присылать новые вакансии по вашим подпискам автоматически.\n\n"
+        f"Статус: {'✅ Включены' if enabled else '❌ Выключены'}",
+        reply_markup=kb.notifications_kb(enabled),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "toggle_notifications")
+async def toggle_notifications(callback: CallbackQuery):
+    user = await db.get_user(callback.from_user.id)
+    new_value = not (user.notifications_enabled if user else True)
+    
+    await db.update_user_settings(callback.from_user.id, notifications_enabled=new_value)
+    
+    await callback.message.edit_text(
+        "🔔 <b>Автоуведомления</b>\n\n"
+        f"{'✅ Уведомления включены!' if new_value else '❌ Уведомления выключены'}",
+        reply_markup=kb.notifications_kb(new_value),
+        parse_mode="HTML"
+    )
+    await callback.answer()
 
