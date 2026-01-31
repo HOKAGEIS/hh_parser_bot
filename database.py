@@ -305,3 +305,18 @@ def get_all_subscriptions() -> List[Tuple]:
         return []
     finally:
         conn.close()
+
+def get_user(user_id: int) -> Optional[Tuple]:
+    """Получение информации о пользователе"""
+    conn = sqlite3.connect(Config.DATABASE_PATH)
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))
+        return cursor.fetchone()
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        return None
+    finally:
+        conn.close()
+
