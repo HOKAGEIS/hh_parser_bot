@@ -1,3 +1,4 @@
+# bot.py (исправленный код)
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher
@@ -34,7 +35,7 @@ dp = Dispatcher()
 async def cmd_start(message: Message):
     logger.info(f"✅ /start от {message.from_user.id}")
     
-    await db.create_user(message.from_user.id, message.from_user.username)
+    await db.ensure_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     
     await message.answer(
         f"👋 Привет, <b>{message.from_user.first_name}</b>!\n\n"
@@ -71,7 +72,7 @@ async def cmd_help(message: Message):
 async def main():
     # Инициализация БД
     try:
-        db.init_db()  # Убран await
+        await db.init_db()  # Добавлен await
         logger.info("✅ База данных инициализирована")
     except Exception as e:
         logger.error(f"❌ Ошибка БД: {e}")
