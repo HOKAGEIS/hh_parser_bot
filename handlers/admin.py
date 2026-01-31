@@ -99,35 +99,9 @@ async def admin_stats(callback: CallbackQuery):
 
 # ==================== РАССЫЛКА ====================
 
-@router.callback_query(F.data == "admin_broadcast")
-async def admin_broadcast_start(callback: CallbackQuery, state: FSMContext):
-    if not is_admin(callback.from_user.id):
-        await callback.answer("❌ Нет доступа")
-        return
-    
-    await state.set_state(AdminStates.waiting_broadcast)
-    
-    try:
-        await callback.message.edit_text(
-            "📢 <b>Рассылка</b>\n\n"
-            "Отправьте сообщение для рассылки всем пользователям.\n\n"
-            "⚠️ Для отмены напишите /cancel",
-            parse_mode="HTML"
-        )
-    except Exception:
-        pass
-    await callback.answer()
-
-
-@router.message(Command("cancel"), AdminStates.waiting_broadcast)
-async def cancel_broadcast(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer("❌ Рассылка отменена", reply_markup=kb.admin_kb())
-
-
 @router.message(AdminStates.waiting_broadcast)
-async def process_broadcast(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
+async def process_broadcast(message: Message, state: FSMContext, bot: Bot):
+    if message.from_user.id not in config.ADMIN_IDS:
         return
     
     await state.clear()
@@ -142,16 +116,9 @@ async def process_broadcast(message: Message, state: FSMContext):
     success = 0
     failed = 0
     
-    from aiogram import Bot
-    bot = Bot.get_current()
-    
     for (user_id,) in users:
         try:
-            await bot.send_message(
-                user_id,
-                message.text,
-                parse_mode="HTML"
-            )
+            await bot.send_message(user_id, message.text, parse_mode="HTML")
             success += 1
         except Exception:
             failed += 1
@@ -163,8 +130,6 @@ async def process_broadcast(message: Message, state: FSMContext):
         reply_markup=kb.admin_kb(),
         parse_mode="HTML"
     )
-
-
 # ==================== НАЗАД ====================
 
 @router.callback_query(F.data == "admin_back")
