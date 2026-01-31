@@ -1,4 +1,4 @@
-# database.py
+# database.py (добавлена функция get_open_ticket)
 import aiosqlite
 import json
 from datetime import datetime
@@ -96,6 +96,31 @@ async def init_db():
                 notifications_enabled BOOLEAN DEFAULT TRUE,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        ''')
+        
+        # Таблица тикетов (для поддержки)
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS tickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                username TEXT,
+                status TEXT DEFAULT 'open',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        ''')
+        
+        # Таблица сообщений тикетов
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS ticket_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket_id INTEGER,
+                sender_type TEXT, -- 'user' или 'support'
+                message TEXT,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (ticket_id) REFERENCES tickets (id)
             )
         ''')
         
@@ -413,3 +438,87 @@ async def get_statistics() -> Dict[str, int]:
         stats['active_subscriptions'] = (await cursor.fetchone())[0]
         
         return stats
+
+
+async def get_open_ticket(user_id: int) -> Optional[Dict[str, Any]]:
+    """Получение открытого тикета пользователя"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute('''
+            SELECT * FROM tickets 
+            WHERE user_id = ? AND status = 'open'
+            ORDER BY created_at DESC
+            LIMIT 1
+        ''', (user_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def create_ticket(user_id: int, username: str) -> int:
+    """Создание нового тикета"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute('''
+            INSERT INTO tickets (user_id, username, status)
+            VALUES (?, ?, 'open')
+        ''', (user_id, username))
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def add_ticket_message(ticket_id: int, sender_type: str, message: str) -> None:
+    """Добавление сообщения в тикет"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            INSERT INTO ticket_messages (ticket_id, sender_type, message)
+            VALUES (?, ?, ?)
+        ''', (ticket_id, sender_type, message))
+        await db.commit()
+
+
+async def close_ticket(ticket_id: int) -> None:
+    """Закрытие тикета"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            UPDATE tickets 
+            SET status = 'closed', updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ''', (ticket_id,))
+        await db.commit()
+
+
+async def get_ticket_by_id(ticket_id: int) -> Optional[Dict[str, Any]]:
+    """Получение тикета по ID"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute('''
+            SELECT * FROM tickets 
+            WHERE id = ?
+        ''', (ticket_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def get_ticket_messages(ticket_id: int) -> List[Dict[str, Any]]:
+    """Получение сообщений тикета"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute('''
+            SELECT * FROM ticket_messages 
+            WHERE ticket_id = ?
+            ORDER BY sent_at ASC
+        ''', (ticket_id,))
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+async def get_all_open_tickets() -> List[Dict[str, Any]]:
+    """Получение всех открытых тикетов"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute('''
+            SELECT * FROM tickets 
+            WHERE status = 'open'
+            ORDER BY created_at DESC
+        ''')
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
