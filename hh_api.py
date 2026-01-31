@@ -77,11 +77,7 @@ class Vacancy:
 
 class HHApi:
     def __init__(self):
-        # hh_api.py (строка ~80)
-# Было:
-self.base_url = config.HH_API_URL
-
-# Должно быть:
+        
 self.base_url = config.HH_API_BASE_URL
     
     async def _request(self, endpoint: str, params: dict = None) -> dict:
