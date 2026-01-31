@@ -75,21 +75,28 @@ class Vacancy:
         return text.strip()
 
 
+# hh_api.py (строки около 75-85)
 class HHApi:
-    def __init__(self):
-        
-self.base_url = config.HH_API_BASE_URL
+    """Класс для работы с API HeadHunter"""
     
-    async def _request(self, endpoint: str, params: dict = None) -> dict:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{self.base_url}{endpoint}",
-                params=params,
-                headers=self.headers
-            ) as response:
-                if response.status == 200:
-                    return await response.json()
-                return {"error": response.status}
+    def __init__(self):
+        # ВСЕ строки внутри функции должны иметь отступ 4 пробела (или 1 tab)
+        self.base_url = config.HH_API_BASE_URL
+        self.session = None
+        self.headers = {
+            'User-Agent': 'HH-Bot/1.0',
+            'Accept': 'application/json'
+        }
+    
+    async def create_session(self):
+        """Создание aiohttp сессии"""
+        if not self.session:
+            self.session = aiohttp.ClientSession()
+    
+    async def close_session(self):
+        """Закрытие сессии"""
+        if self.session:
+            await self.session.close()
     
     async def search_vacancies(
         self,
@@ -320,4 +327,5 @@ self.base_url = config.HH_API_BASE_URL
 
 
 hh = HHApi()
+
 
