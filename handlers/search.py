@@ -923,11 +923,11 @@ async def cancel(callback: CallbackQuery, state: FSMContext):
 
 # ==================== FALLBACK (чтобы не было Update is not handled) ====================
 
-@router.callback_query()
-async def unknown_callback(callback: CallbackQuery):
+@router.callback_query(SearchStates.viewing_results)
+async def unknown_callback_in_results(callback: CallbackQuery):
     await callback.answer("Кнопка неактуальна или не поддерживается.", show_alert=False)
 
 
-@router.message()
-async def unknown_message(message: Message, state: FSMContext):
-    await message.answer("Я вас не понял. Нажмите «🔍 Поиск вакансий» или отправьте /start.")
+@router.message(SearchStates.viewing_results)
+async def unknown_message_in_results(message: Message, state: FSMContext):
+    await message.answer("Используйте кнопки навигации под вакансией или нажмите ❌ Закрыть.")
