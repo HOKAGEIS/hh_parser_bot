@@ -1,10 +1,12 @@
 # handlers/settings.py (исправленный код)
+import logging
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton
+from aiogram.exceptions import TelegramBadRequest
 
 import database as db
 import keyboards as kb
@@ -12,6 +14,7 @@ from hh_api import hh
 from config import Config
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 
 class SettingsStates(StatesGroup):
@@ -23,13 +26,10 @@ class SettingsStates(StatesGroup):
 # ==================== ВСПОМОГАТЕЛЬНОЕ ====================
 
 def settings_cities_kb() -> InlineKeyboardBuilder:
-    """
-    Отдельная клавиатура для настроек (НЕ kb.cities_kb),
-    чтобы callback_data были settings_set_city_*
-    """
+    """Клавиатура для настроек города"""
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text="🌍 Любой город", callback_data="settings_set_city_any")
+        InlineKeyboardButton(text="🌍 Любой город", callback_data="settings_city_any")
     )
     builder.row(
         InlineKeyboardButton(text="✏️ Ввести вручную", callback_data="settings_enter_city_manual")
@@ -38,11 +38,25 @@ def settings_cities_kb() -> InlineKeyboardBuilder:
     # популярные города
     for city_id, city_name in list(Config.POPULAR_CITIES.items())[:10]:
         builder.row(
-            InlineKeyboardButton(text=f"📍 {city_name}", callback_data=f"settings_set_city_{city_id}")
+            InlineKeyboardButton(
+                text=f"📍 {city_name}",
+                callback_data=f"settings_city_id:{city_id}:{city_name[:30]}"
+            )
         )
 
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_settings"))
     return builder
+
+
+async def safe_edit_text(message: Message, text: str, reply_markup=None, parse_mode="HTML"):
+    """Безопасное редактирование сообщения"""
+    try:
+        await message.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e):
+            logger.warning(f"Не удалось отредактировать сообщение: {e}")
+    except Exception as e:
+        logger.error(f"Ошибка редактирования: {e}")
 
 
 # ==================== НАСТРОЙКИ (меню) ====================
@@ -98,29 +112,22 @@ async def show_letters(message: Message, state: FSMContext):
 @router.callback_query(F.data == "settings_city")
 async def settings_city(callback: CallbackQuery, state: FSMContext):
     await state.set_state(None)
-
-    try:
-        await callback.message.edit_text(
-            "📍 <b>Город по умолчанию</b>\n\nВыберите из списка или введите вручную:",
-            reply_markup=settings_cities_kb().as_markup(),
-            parse_mode="HTML",
-        )
-    except Exception:
-        pass
+    await safe_edit_text(
+        callback.message,
+        "📍 <b>Город по умолчанию</b>\n\nВыберите из списка или введите вручную:",
+        reply_markup=settings_cities_kb().as_markup(),
+    )
     await callback.answer()
 
 
 @router.callback_query(F.data == "settings_enter_city_manual")
 async def settings_enter_city_manual(callback: CallbackQuery, state: FSMContext):
     await state.set_state(SettingsStates.entering_city)
-    try:
-        await callback.message.edit_text(
-            "📍 <b>Введите город по умолчанию:</b>\n\n<i>Например: Казань</i>",
-            reply_markup=kb.back_kb("back_to_settings"),
-            parse_mode="HTML",
-        )
-    except Exception:
-        pass
+    await safe_edit_text(
+        callback.message,
+        "📍 <b>Введите город по умолчанию:</b>\n\n<i>Например: Казань</i>",
+        reply_markup=kb.back_kb("back_to_settings"),
+    )
     await callback.answer()
 
 
@@ -133,7 +140,13 @@ async def settings_city_manual_text(message: Message, state: FSMContext):
 
     await message.answer("🔍 Ищу город...")
 
-    cities = await hh.search_area(city_name)
+    try:
+        cities = await hh.search_area(city_name)
+    except Exception as e:
+        logger.error(f"Ошибка поиска города: {e}")
+        await message.answer("❌ Ошибка поиска. Попробуйте позже.")
+        return
+
     if not cities:
         await message.answer("😔 Город не найден. Попробуйте другое название.")
         return
@@ -153,15 +166,18 @@ async def settings_city_manual_text(message: Message, state: FSMContext):
         )
         return
 
-    # несколько вариантов — сохраняем mapping в state и показываем кнопки по id
-    variants = {str(c.get("id")): (c.get("text") or c.get("name") or "Город") for c in cities}
-    await state.update_data(city_variants=variants)
+    # Несколько вариантов — показываем кнопки
     await state.set_state(None)
 
     builder = InlineKeyboardBuilder()
-    for cid, name in list(variants.items())[:20]:
-        builder.row(InlineKeyboardButton(text=f"📍 {name[:60]}", callback_data=f"settings_set_city_{cid}"))
-    builder.row(InlineKeyboardButton(text="🌍 Любой город", callback_data="settings_set_city_any"))
+    for c in cities[:20]:
+        cid = str(c.get("id"))
+        name = c.get("text") or c.get("name") or "Город"
+        # Формат: settings_city_id:ID:NAME (имя обрезаем для callback_data)
+        callback_data = f"settings_city_id:{cid}:{name[:30]}"
+        builder.row(InlineKeyboardButton(text=f"📍 {name[:60]}", callback_data=callback_data))
+
+    builder.row(InlineKeyboardButton(text="🌍 Любой город", callback_data="settings_city_any"))
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_settings"))
 
     await message.answer("Выберите город:", reply_markup=builder.as_markup())
@@ -172,43 +188,57 @@ async def settings_city_manual_not_text(message: Message):
     await message.answer("⚠️ Введите город текстом.")
 
 
-@router.callback_query(F.data == "settings_set_city_any")
+@router.callback_query(F.data == "settings_city_any")
 async def settings_set_city_any(callback: CallbackQuery, state: FSMContext):
     await db.update_user_settings(callback.from_user.id, city_id=None, city_name=None)
     await state.clear()
 
     user = await db.get_user(callback.from_user.id)
-    try:
-        await callback.message.edit_text(
-            "✅ Город по умолчанию сброшен.",
-            reply_markup=kb.settings_kb(user),
-            parse_mode="HTML",
-        )
-    except Exception:
-        pass
+    await safe_edit_text(
+        callback.message,
+        "✅ Город по умолчанию сброшен.",
+        reply_markup=kb.settings_kb(user),
+    )
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("settings_set_city_"))
+@router.callback_query(F.data.startswith("settings_city_id:"))
 async def settings_set_city(callback: CallbackQuery, state: FSMContext):
-    city_id = callback.data.replace("settings_set_city_", "", 1)
-
-    data = await state.get_data()
-    name = (data.get("city_variants") or {}).get(city_id)  # может быть None
-
-    await db.update_user_settings(callback.from_user.id, city_id=city_id, city_name=name)
-    await state.clear()
-
-    user = await db.get_user(callback.from_user.id)
+    """Обработка выбора города. Формат: settings_city_id:ID:NAME"""
     try:
-        await callback.message.edit_text(
-            f"✅ Город по умолчанию: <b>{user.get('city_name', 'не выбран') if user else 'не выбран'}</b>",
-            reply_markup=kb.settings_kb(user),
-            parse_mode="HTML",
+        parts = callback.data.split(":", 2)  # Максимум 3 части
+        if len(parts) < 2:
+            await callback.answer("❌ Ошибка данных", show_alert=True)
+            return
+
+        city_id = parts[1]
+        # Имя может быть в callback_data или в POPULAR_CITIES
+        city_name = parts[2] if len(parts) > 2 else None
+
+        # Если имя не передано, ищем в POPULAR_CITIES
+        if not city_name and city_id in Config.POPULAR_CITIES:
+            city_name = Config.POPULAR_CITIES[city_id]
+
+        await db.update_user_settings(
+            callback.from_user.id,
+            city_id=city_id,
+            city_name=city_name
         )
-    except Exception:
-        pass
-    await callback.answer("✅ Сохранено")
+        await state.clear()
+
+        user = await db.get_user(callback.from_user.id)
+        display_name = user.get('city_name') or city_name or city_id
+
+        await safe_edit_text(
+            callback.message,
+            f"✅ Город по умолчанию: <b>{display_name}</b>",
+            reply_markup=kb.settings_kb(user),
+        )
+        await callback.answer("✅ Сохранено")
+
+    except Exception as e:
+        logger.error(f"Ошибка установки города: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
 
 
 # ==================== НАСТРОЙКИ: ТОЛЬКО С ЗАРПЛАТОЙ ====================
@@ -222,15 +252,11 @@ async def settings_salary_toggle(callback: CallbackQuery):
     await db.update_user_settings(callback.from_user.id, only_with_salary=new_value)
     user = await db.get_user(callback.from_user.id)
 
-    try:
-        await callback.message.edit_text(
-            "⚙️ <b>Настройки</b>",
-            reply_markup=kb.settings_kb(user),
-            parse_mode="HTML",
-        )
-    except Exception:
-        pass
-
+    await safe_edit_text(
+        callback.message,
+        "⚙️ <b>Настройки</b>",
+        reply_markup=kb.settings_kb(user),
+    )
     await callback.answer(f"✅ {'Включено' if new_value else 'Выключено'}")
 
 
@@ -246,14 +272,11 @@ async def settings_exclude(callback: CallbackQuery, state: FSMContext):
     text = "🚫 <b>Слова-исключения</b>\n\n"
     text += (", ".join([f"<code>{w}</code>" for w in words]) if words else "Список пуст.")
 
-    try:
-        await callback.message.edit_text(
-            text,
-            reply_markup=kb.settings_exclude_kb(words),  # <-- кнопки settings_remove_exclude_{index}
-            parse_mode="HTML",
-        )
-    except Exception:
-        pass
+    await safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=kb.settings_exclude_kb(words),
+    )
     await callback.answer()
 
 
@@ -261,41 +284,42 @@ async def settings_exclude(callback: CallbackQuery, state: FSMContext):
 async def settings_add_exclude(callback: CallbackQuery, state: FSMContext):
     await state.set_state(SettingsStates.adding_exclude_word)
 
-    try:
-        await callback.message.edit_text(
-            "🚫 <b>Добавить слово-исключение</b>\n\n"
-            "Введите слово:\n\n"
-            "<i>Примеры: стажёр, junior, без опыта</i>",
-            reply_markup=kb.back_kb("back_to_settings"),
-            parse_mode="HTML",
-        )
-    except Exception:
-        pass
+    await safe_edit_text(
+        callback.message,
+        "🚫 <b>Добавить слово-исключение</b>\n\n"
+        "Введите слово:\n\n"
+        "<i>Примеры: стажёр, junior, без опыта</i>",
+        reply_markup=kb.back_kb("back_to_settings"),
+    )
     await callback.answer()
 
 
 @router.message(SettingsStates.adding_exclude_word, F.text)
 async def process_exclude_word(message: Message, state: FSMContext):
     word = (message.text or "").strip().lower()
+
     if len(word) < 2:
-        await message.answer("⚠️ Слишком короткое")
+        await message.answer("⚠️ Слишком короткое слово (минимум 2 символа)")
         return
+
     if len(word) > 50:
-        await message.answer("⚠️ Слишком длинное (макс 50)")
+        await message.answer("⚠️ Слишком длинное слово (максимум 50 символов)")
         return
 
     user = await db.get_user(message.from_user.id)
-    words = user.get('exclude_words', []) if user else []
+    words = list(user.get('exclude_words', []) if user else [])  # Копия списка
 
     max_words = getattr(Config, "MAX_EXCLUDE_WORDS", 20)
     if len(words) >= max_words:
-        await message.answer(f"⚠️ Максимум {max_words} слов")
+        await message.answer(f"⚠️ Максимум {max_words} слов. Удалите старые.")
         return
 
-    if word not in words:
-        words.append(word)
-        await db.update_user_settings(message.from_user.id, exclude_words=words)
+    if word in words:
+        await message.answer(f"⚠️ Слово «{word}» уже добавлено")
+        return
 
+    words.append(word)
+    await db.update_user_settings(message.from_user.id, exclude_words=words)
     await state.clear()
 
     await message.answer(
@@ -312,49 +336,50 @@ async def process_exclude_word_not_text(message: Message):
 
 @router.callback_query(F.data.startswith("settings_remove_exclude_"))
 async def settings_remove_exclude(callback: CallbackQuery):
-    # ВАЖНО: теперь удаляем по индексу, а не по слову
+    """Удаление слова по индексу"""
     idx_str = callback.data.replace("settings_remove_exclude_", "", 1)
+
     try:
         idx = int(idx_str)
     except ValueError:
-        await callback.answer("Ошибка кнопки", show_alert=True)
+        await callback.answer("❌ Ошибка данных", show_alert=True)
         return
 
     user = await db.get_user(callback.from_user.id)
-    words = user.get('exclude_words', []) if user else []
+    words = list(user.get('exclude_words', []) if user else [])  # Копия списка
 
     if not (0 <= idx < len(words)):
-        await callback.answer("Уже удалено", show_alert=False)
-        return
-
-    words.pop(idx)
-    await db.update_user_settings(callback.from_user.id, exclude_words=words)
-
-    try:
-        await callback.message.edit_text(
+        await callback.answer("⚠️ Слово уже удалено")
+        # Обновляем клавиатуру
+        await safe_edit_text(
+            callback.message,
             "🚫 <b>Слова-исключения</b>\n\n" +
             (", ".join([f"<code>{w}</code>" for w in words]) if words else "Список пуст."),
             reply_markup=kb.settings_exclude_kb(words),
-            parse_mode="HTML",
         )
-    except Exception:
-        pass
+        return
 
-    await callback.answer("✅ Удалено")
+    removed_word = words.pop(idx)
+    await db.update_user_settings(callback.from_user.id, exclude_words=words)
+
+    await safe_edit_text(
+        callback.message,
+        "🚫 <b>Слова-исключения</b>\n\n" +
+        (", ".join([f"<code>{w}</code>" for w in words]) if words else "Список пуст."),
+        reply_markup=kb.settings_exclude_kb(words),
+    )
+    await callback.answer(f"✅ Удалено: {removed_word}")
 
 
 @router.callback_query(F.data == "settings_clear_exclude")
 async def settings_clear_exclude(callback: CallbackQuery):
     await db.update_user_settings(callback.from_user.id, exclude_words=[])
 
-    try:
-        await callback.message.edit_text(
-            "🚫 <b>Слова-исключения</b>\n\n✅ Очищено",
-            reply_markup=kb.settings_exclude_kb([]),
-            parse_mode="HTML",
-        )
-    except Exception:
-        pass
+    await safe_edit_text(
+        callback.message,
+        "🚫 <b>Слова-исключения</b>\n\n✅ Список очищен",
+        reply_markup=kb.settings_exclude_kb([]),
+    )
     await callback.answer("🗑 Очищено")
 
 
@@ -365,12 +390,12 @@ async def settings_notifications(callback: CallbackQuery):
     user = await db.get_user(callback.from_user.id)
     enabled = user.get('notifications_enabled', True) if user else True
 
-    await callback.message.edit_text(
+    await safe_edit_text(
+        callback.message,
         "🔔 <b>Автоуведомления</b>\n\n"
         "Бот будет присылать новые вакансии по вашим подпискам автоматически.\n\n"
         f"Статус: {'✅ Включены' if enabled else '❌ Выключены'}",
         reply_markup=kb.notifications_kb(enabled),
-        parse_mode="HTML",
     )
     await callback.answer()
 
@@ -383,11 +408,11 @@ async def toggle_notifications(callback: CallbackQuery):
 
     await db.update_user_settings(callback.from_user.id, notifications_enabled=new_value)
 
-    await callback.message.edit_text(
+    await safe_edit_text(
+        callback.message,
         "🔔 <b>Автоуведомления</b>\n\n"
         f"{'✅ Уведомления включены!' if new_value else '❌ Уведомления выключены'}",
         reply_markup=kb.notifications_kb(new_value),
-        parse_mode="HTML",
     )
     await callback.answer()
 
@@ -412,14 +437,11 @@ async def settings_reset(callback: CallbackQuery, state: FSMContext):
 
     user = await db.get_user(callback.from_user.id)
 
-    try:
-        await callback.message.edit_text(
-            "⚙️ <b>Настройки</b>\n\n✅ Сброшено!",
-            reply_markup=kb.settings_kb(user),
-            parse_mode="HTML",
-        )
-    except Exception:
-        pass
+    await safe_edit_text(
+        callback.message,
+        "⚙️ <b>Настройки</b>\n\n✅ Все настройки сброшены!",
+        reply_markup=kb.settings_kb(user),
+    )
     await callback.answer("🔄 Сброшено")
 
 
@@ -428,14 +450,11 @@ async def back_to_settings(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     user = await db.get_user(callback.from_user.id)
 
-    try:
-        await callback.message.edit_text(
-            "⚙️ <b>Настройки</b>",
-            reply_markup=kb.settings_kb(user),
-            parse_mode="HTML",
-        )
-    except Exception:
-        pass
+    await safe_edit_text(
+        callback.message,
+        "⚙️ <b>Настройки</b>",
+        reply_markup=kb.settings_kb(user),
+    )
     await callback.answer()
 
 
@@ -456,34 +475,43 @@ async def show_analytics_prompt(message: Message, state: FSMContext):
 @router.message(SettingsStates.entering_analytics_query, F.text)
 async def process_analytics_query(message: Message, state: FSMContext):
     query = (message.text or "").strip()
+
     if len(query) < 2:
-        await message.answer("⚠️ Слишком короткий запрос.")
+        await message.answer("⚠️ Слишком короткий запрос (минимум 2 символа).")
+        return
+
+    if len(query) > 100:
+        await message.answer("⚠️ Слишком длинный запрос (максимум 100 символов).")
         return
 
     await state.clear()
-    await message.answer("📊 Анализирую...")
+    status_msg = await message.answer("📊 Анализирую данные...")
 
-    stats = await hh.get_salary_statistics(query)
+    try:
+        stats = await hh.get_salary_statistics(query)
+    except Exception as e:
+        logger.error(f"Ошибка получения статистики: {e}")
+        await status_msg.edit_text("❌ Ошибка получения данных. Попробуйте позже.")
+        return
 
     if stats.get("count", 0) == 0:
-        await message.answer(
+        await status_msg.edit_text(
             f"😔 По запросу «{query}» вакансий с зарплатой не найдено.",
-            reply_markup=kb.main_menu_kb(message.from_user.id),
         )
         return
 
     text = (
         f"📊 <b>Аналитика: {query}</b>\n\n"
-        f"📈 Всего: {stats['total_found']}\n"
-        f"💰 С зарплатой: {stats['count']}\n\n"
+        f"📈 Всего вакансий: {stats['total_found']:,}\n"
+        f"💰 С указанной зарплатой: {stats['count']:,}\n\n"
         f"<b>Зарплаты (₽):</b>\n"
-        f"├ Мин: {stats['min']:,}\n"
-        f"├ Макс: {stats['max']:,}\n"
+        f"├ Минимум: {stats['min']:,}\n"
+        f"├ Максимум: {stats['max']:,}\n"
         f"├ Средняя: {stats['avg']:,}\n"
         f"└ Медиана: {stats['median']:,}\n"
     ).replace(",", " ")
 
-    await message.answer(text, reply_markup=kb.main_menu_kb(message.from_user.id), parse_mode="HTML")
+    await status_msg.edit_text(text, parse_mode="HTML")
 
 
 @router.message(SettingsStates.entering_analytics_query)
