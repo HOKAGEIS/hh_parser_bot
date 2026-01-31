@@ -1,16 +1,43 @@
+# database.py (исправленная и расширенная версия под ваш проект)
+# Цели правок:
+# 1) Совместимость с вашим текущим кодом (функции/таблицы сохраняем)
+# 2) Исправление критичного: User.hh_access_token и др. (у вас в роутерах это используется)
+# 3) Добавление applied + was_applied/mark_applied (у вас в search_router это вызывается)
+# 4) Убираем "хрупкие" индексы row[0] -> используем row["col"] (после миграций это важно)
+# 5) Добавляем set_user_exclude_words() и ensure_user() для новых обработчиков настроек
+#
+# Требования: aiosqlite
+
+from __future__ import annotations
+
 import aiosqlite
 import json
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
 from datetime import datetime
 
-DATABASE = "hh_bot.db"
+try:
+    from config import config  # опционально
+except Exception:
+    config = None
 
+
+# Если в config есть путь — используем его, иначе ваш дефолт
+DATABASE = getattr(config, "DB_PATH", None) or getattr(config, "DATABASE", None) or "hh_bot.db"
+
+
+# ==================== DATACLASSES ====================
 
 @dataclass
 class User:
     id: int
     username: Optional[str]
+
+    # HH OAuth (важно: в роутерах у вас это используется)
+    hh_access_token: Optional[str]
+    hh_refresh_token: Optional[str]
+    hh_token_expires_at: Optional[str]
+
     default_city: Optional[str]
     default_city_name: Optional[str]
     default_experience: Optional[str]
@@ -41,35 +68,101 @@ class Subscription:
     experience: Optional[str]
     schedule: Optional[str]
     min_salary: Optional[int]
-    exclude_words: Optional[str]
+    exclude_words: Optional[str]  # ХРАНИМ КАК JSON-строку для обратной совместимости
     last_vacancy_id: Optional[str]
     last_check: Optional[str]
     active: bool
     created_at: str
 
+    @property
+    def exclude_words_list(self) -> List[str]:
+        try:
+            return json.loads(self.exclude_words or "[]")
+        except Exception:
+            return []
+
+
+# ==================== HELPERS ====================
+
+def _now_iso() -> str:
+    return datetime.now().isoformat()
+
+
+def _json_dumps(obj: Any) -> str:
+    return json.dumps(obj, ensure_ascii=False)
+
+
+def _json_loads(s: Optional[str], default: Any):
+    if not s:
+        return default
+    try:
+        return json.loads(s)
+    except Exception:
+        return default
+
+
+async def _connect() -> aiosqlite.Connection:
+    db = await aiosqlite.connect(DATABASE)
+    db.row_factory = aiosqlite.Row
+    await db.execute("PRAGMA foreign_keys = ON;")
+    await db.execute("PRAGMA journal_mode = WAL;")
+    return db
+
+
+async def _ensure_columns(db: aiosqlite.Connection, table: str, columns: Dict[str, str]) -> None:
+    """
+    columns: {"col_name": "SQL_DEF"} где SQL_DEF например "TEXT", "INTEGER DEFAULT 0"
+    """
+    cur = await db.execute(f"PRAGMA table_info({table})")
+    rows = await cur.fetchall()
+    existing = {r["name"] for r in rows}
+
+    for col, sql_def in columns.items():
+        if col not in existing:
+            await db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {sql_def}")
+
+
+# ==================== INIT DB ====================
 
 async def init_db():
-    """Инициализация базы данных"""
-    async with aiosqlite.connect(DATABASE) as db:
-        # Пользователи
-        await db.execute("""
+    """Инициализация базы данных + мягкие миграции (добавление недостающих колонок/таблиц)."""
+    async with await _connect() as db:
+        # Пользователи (базовая таблица)
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY,
                 username TEXT,
+
                 default_city TEXT,
                 default_city_name TEXT,
                 default_experience TEXT,
                 default_schedule TEXT,
+
                 min_salary INTEGER,
                 only_with_salary BOOLEAN DEFAULT 0,
                 exclude_words TEXT DEFAULT '[]',
                 notifications_enabled BOOLEAN DEFAULT 1,
+
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
-        
+            """
+        )
+
+        # Миграция: добавляем HH OAuth колонки, если их нет
+        await _ensure_columns(
+            db,
+            "users",
+            {
+                "hh_access_token": "TEXT",
+                "hh_refresh_token": "TEXT",
+                "hh_token_expires_at": "TEXT",
+            },
+        )
+
         # Избранное
-        await db.execute("""
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS favorites (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -78,10 +171,12 @@ async def init_db():
                 added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(user_id, vacancy_id)
             )
-        """)
-        
+            """
+        )
+
         # Подписки
-        await db.execute("""
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS subscriptions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -97,10 +192,12 @@ async def init_db():
                 active BOOLEAN DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
-        
+            """
+        )
+
         # История поиска
-        await db.execute("""
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS search_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -110,10 +207,12 @@ async def init_db():
                 filters TEXT DEFAULT '{}',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
-        
+            """
+        )
+
         # Тикеты поддержки
-        await db.execute("""
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS tickets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -121,10 +220,12 @@ async def init_db():
                 status TEXT DEFAULT 'open',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
-        
+            """
+        )
+
         # Сообщения в тикетах
-        await db.execute("""
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS ticket_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ticket_id INTEGER NOT NULL,
@@ -132,10 +233,12 @@ async def init_db():
                 message TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
-        
+            """
+        )
+
         # Отправленные уведомления (чтобы не дублировать)
-        await db.execute("""
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS sent_notifications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -144,45 +247,87 @@ async def init_db():
                 sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(user_id, subscription_id, vacancy_id)
             )
-        """)
-        
+            """
+        )
+
+        # ОТКЛИКИ (applied) — нужно для was_applied/mark_applied в search_router
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS applied (
+                user_id INTEGER NOT NULL,
+                vacancy_id TEXT NOT NULL,
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, vacancy_id)
+            )
+            """
+        )
+
+        # Индексы (не обязательны, но полезны)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_favorites_user ON favorites(user_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_subscriptions_active ON subscriptions(active)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_history_user ON search_history(user_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_applied_user ON applied(user_id)")
+
         await db.commit()
-        print("✅ База данных инициализирована")
+
+    print("✅ База данных инициализирована")
 
 
 # ==================== ПОЛЬЗОВАТЕЛИ ====================
 
-async def get_user(user_id: int) -> Optional[User]:
-    async with aiosqlite.connect(DATABASE) as db:
-        cursor = await db.execute("SELECT * FROM users WHERE id = ?", (user_id,))
-        row = await cursor.fetchone()
-        if row:
-            return User(
-                id=row[0], username=row[1], default_city=row[2],
-                default_city_name=row[3], default_experience=row[4],
-                default_schedule=row[5], min_salary=row[6],
-                only_with_salary=bool(row[7]),
-                exclude_words=json.loads(row[8]) if row[8] else [],
-                notifications_enabled=bool(row[9]) if len(row) > 9 else True,
-                created_at=row[10] if len(row) > 10 else ""
-            )
-    return None
-
-
 async def create_user(user_id: int, username: str = None):
-    async with aiosqlite.connect(DATABASE) as db:
+    async with await _connect() as db:
         await db.execute(
             "INSERT OR IGNORE INTO users (id, username, exclude_words) VALUES (?, ?, '[]')",
-            (user_id, username)
+            (user_id, username),
         )
+        # если юзер уже был, но username пришёл новый — обновим
+        if username:
+            await db.execute(
+                "UPDATE users SET username = COALESCE(?, username) WHERE id = ?",
+                (username, user_id),
+            )
         await db.commit()
 
 
+async def ensure_user(user_id: int, username: str = None):
+    """Alias для совместимости с новым кодом."""
+    await create_user(user_id, username=username)
+
+
+async def get_user(user_id: int) -> Optional[User]:
+    async with await _connect() as db:
+        cursor = await db.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+        row = await cursor.fetchone()
+        if not row:
+            return None
+
+        return User(
+            id=int(row["id"]),
+            username=row["username"],
+
+            hh_access_token=row.get("hh_access_token"),
+            hh_refresh_token=row.get("hh_refresh_token"),
+            hh_token_expires_at=row.get("hh_token_expires_at"),
+
+            default_city=row["default_city"],
+            default_city_name=row["default_city_name"],
+            default_experience=row["default_experience"],
+            default_schedule=row["default_schedule"],
+            min_salary=row["min_salary"],
+            only_with_salary=bool(row["only_with_salary"]),
+            exclude_words=_json_loads(row["exclude_words"], []),
+            notifications_enabled=bool(row["notifications_enabled"]),
+            created_at=row["created_at"] if row.get("created_at") is not None else "",
+        )
+
+
 async def update_user_settings(user_id: int, **kwargs):
-    async with aiosqlite.connect(DATABASE) as db:
+    async with await _connect() as db:
         updates = []
         values = []
-        
+
         field_map = {
             "city": "default_city",
             "city_name": "default_city_name",
@@ -192,81 +337,116 @@ async def update_user_settings(user_id: int, **kwargs):
             "only_with_salary": "only_with_salary",
             "exclude_words": "exclude_words",
             "notifications_enabled": "notifications_enabled",
+            # HH oauth (если понадобятся)
+            "hh_access_token": "hh_access_token",
+            "hh_refresh_token": "hh_refresh_token",
+            "hh_token_expires_at": "hh_token_expires_at",
         }
-        
+
         for key, value in kwargs.items():
-            if key in field_map:
-                if key == "exclude_words" and isinstance(value, list):
-                    value = json.dumps(value, ensure_ascii=False)
-                updates.append(f"{field_map[key]} = ?")
-                values.append(value)
-        
+            if key not in field_map:
+                continue
+
+            col = field_map[key]
+
+            if key == "exclude_words":
+                if isinstance(value, list):
+                    value = _json_dumps([w.strip().lower() for w in value if w and w.strip()])
+                elif value is None:
+                    value = "[]"
+
+            if key in ("only_with_salary", "notifications_enabled") and value is not None:
+                value = 1 if bool(value) else 0
+
+            updates.append(f"{col} = ?")
+            values.append(value)
+
         if updates:
             values.append(user_id)
             await db.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = ?", values)
             await db.commit()
 
 
+async def set_user_exclude_words(user_id: int, words: List[str]):
+    """Нужно для обработчиков settings_remove_exclude_{i}."""
+    await ensure_user(user_id)
+    words_norm = [w.strip().lower() for w in (words or []) if w and w.strip()]
+    await update_user_settings(user_id, exclude_words=words_norm)
+
+
 async def get_all_users_with_notifications() -> List[int]:
     """Получить всех пользователей с включёнными уведомлениями"""
-    async with aiosqlite.connect(DATABASE) as db:
-        cursor = await db.execute(
-            "SELECT id FROM users WHERE notifications_enabled = 1"
-        )
+    async with await _connect() as db:
+        cursor = await db.execute("SELECT id FROM users WHERE notifications_enabled = 1")
         rows = await cursor.fetchall()
-        return [row[0] for row in rows]
+        return [int(row["id"]) for row in rows]
 
 
 # ==================== ИСТОРИЯ ПОИСКА ====================
 
-async def add_search_history(user_id: int, query: str, city: str = None, city_name: str = None, filters: dict = None):
-    """Добавить запрос в историю"""
-    async with aiosqlite.connect(DATABASE) as db:
-        # Удаляем дубликаты
+async def add_search_history(
+    user_id: int,
+    query: str,
+    city: str = None,
+    city_name: str = None,
+    filters: dict = None,
+):
+    """Добавить запрос в историю (хранит последние 10 без дублей по query)"""
+    async with await _connect() as db:
         await db.execute(
             "DELETE FROM search_history WHERE user_id = ? AND query = ?",
-            (user_id, query)
+            (user_id, query),
         )
-        
-        # Добавляем новый
+
         await db.execute(
             "INSERT INTO search_history (user_id, query, city, city_name, filters) VALUES (?, ?, ?, ?, ?)",
-            (user_id, query, city, city_name, json.dumps(filters or {}))
+            (user_id, query, city, city_name, _json_dumps(filters or {})),
         )
-        
-        # Оставляем только последние 10
-        await db.execute("""
-            DELETE FROM search_history WHERE user_id = ? AND id NOT IN (
-                SELECT id FROM search_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 10
+
+        await db.execute(
+            """
+            DELETE FROM search_history
+            WHERE user_id = ? AND id NOT IN (
+                SELECT id FROM search_history
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+                LIMIT 10
             )
-        """, (user_id, user_id))
-        
+            """,
+            (user_id, user_id),
+        )
+
         await db.commit()
 
 
 async def get_search_history(user_id: int, limit: int = 10) -> List[dict]:
-    """Получить историю поиска"""
-    async with aiosqlite.connect(DATABASE) as db:
+    async with await _connect() as db:
         cursor = await db.execute(
-            "SELECT query, city, city_name, filters, created_at FROM search_history WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
-            (user_id, limit)
+            """
+            SELECT query, city, city_name, filters, created_at
+            FROM search_history
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
         )
         rows = await cursor.fetchall()
+
         return [
             {
-                "query": row[0],
-                "city": row[1],
-                "city_name": row[2],
-                "filters": json.loads(row[3]) if row[3] else {},
-                "created_at": row[4]
+                "query": r["query"],
+                "city": r["city"],
+                "city_name": r["city_name"],
+                "filters": _json_loads(r["filters"], {}),
+                "created_at": r["created_at"],
             }
-            for row in rows
+            for r in rows
         ]
 
 
 async def clear_search_history(user_id: int):
-    """Очистить историю поиска"""
-    async with aiosqlite.connect(DATABASE) as db:
+    async with await _connect() as db:
         await db.execute("DELETE FROM search_history WHERE user_id = ?", (user_id,))
         await db.commit()
 
@@ -274,172 +454,299 @@ async def clear_search_history(user_id: int):
 # ==================== ИЗБРАННОЕ ====================
 
 async def add_favorite(user_id: int, vacancy_id: str, vacancy_data: dict):
-    async with aiosqlite.connect(DATABASE) as db:
+    async with await _connect() as db:
         try:
             await db.execute(
                 "INSERT INTO favorites (user_id, vacancy_id, vacancy_data) VALUES (?, ?, ?)",
-                (user_id, vacancy_id, json.dumps(vacancy_data, ensure_ascii=False))
+                (user_id, vacancy_id, _json_dumps(vacancy_data or {})),
             )
             await db.commit()
             return True
-        except:
+        except aiosqlite.IntegrityError:
+            # Уже существует (UNIQUE user_id, vacancy_id)
             return False
 
 
 async def remove_favorite(user_id: int, vacancy_id: str):
-    async with aiosqlite.connect(DATABASE) as db:
-        await db.execute("DELETE FROM favorites WHERE user_id = ? AND vacancy_id = ?", (user_id, vacancy_id))
+    async with await _connect() as db:
+        await db.execute(
+            "DELETE FROM favorites WHERE user_id = ? AND vacancy_id = ?",
+            (user_id, vacancy_id),
+        )
         await db.commit()
 
 
 async def get_favorites(user_id: int) -> List[Favorite]:
-    async with aiosqlite.connect(DATABASE) as db:
+    async with await _connect() as db:
         cursor = await db.execute(
-            "SELECT id, user_id, vacancy_id, vacancy_data, added_at FROM favorites WHERE user_id = ? ORDER BY added_at DESC",
-            (user_id,)
+            """
+            SELECT id, user_id, vacancy_id, vacancy_data, added_at
+            FROM favorites
+            WHERE user_id = ?
+            ORDER BY added_at DESC
+            """,
+            (user_id,),
         )
         rows = await cursor.fetchall()
-        return [Favorite(id=r[0], user_id=r[1], vacancy_id=r[2], vacancy_data=json.loads(r[3]), added_at=r[4]) for r in rows]
+
+        return [
+            Favorite(
+                id=int(r["id"]),
+                user_id=int(r["user_id"]),
+                vacancy_id=r["vacancy_id"],
+                vacancy_data=_json_loads(r["vacancy_data"], {}),
+                added_at=r["added_at"],
+            )
+            for r in rows
+        ]
 
 
 async def is_favorite(user_id: int, vacancy_id: str) -> bool:
-    async with aiosqlite.connect(DATABASE) as db:
-        cursor = await db.execute("SELECT 1 FROM favorites WHERE user_id = ? AND vacancy_id = ?", (user_id, vacancy_id))
+    async with await _connect() as db:
+        cursor = await db.execute(
+            "SELECT 1 FROM favorites WHERE user_id = ? AND vacancy_id = ?",
+            (user_id, vacancy_id),
+        )
         return await cursor.fetchone() is not None
 
 
 async def clear_favorites(user_id: int):
-    async with aiosqlite.connect(DATABASE) as db:
+    async with await _connect() as db:
         await db.execute("DELETE FROM favorites WHERE user_id = ?", (user_id,))
         await db.commit()
 
 
-# ==================== ПОДПИСКИ ====================
+# Alias под новый код (если пригодится)
+async def list_favorites(user_id: int) -> List[Favorite]:
+    return await get_favorites(user_id)
 
-async def add_subscription(user_id: int, query: str, city: str = None, city_name: str = None,
-                           experience: str = None, schedule: str = None, min_salary: int = None,
-                           exclude_words: List[str] = None) -> int:
-    async with aiosqlite.connect(DATABASE) as db:
-        cursor = await db.execute(
-            """INSERT INTO subscriptions 
-               (user_id, query, city, city_name, experience, schedule, min_salary, exclude_words) 
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (user_id, query, city, city_name, experience, schedule, min_salary, json.dumps(exclude_words or []))
+
+# ==================== ОТКЛИКИ (applied) ====================
+
+async def mark_applied(user_id: int, vacancy_id: str):
+    """Отметить, что пользователь откликнулся."""
+    async with await _connect() as db:
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO applied (user_id, vacancy_id, applied_at)
+            VALUES (?, ?, ?)
+            """,
+            (user_id, vacancy_id, _now_iso()),
         )
         await db.commit()
-        return cursor.lastrowid
+
+
+async def was_applied(user_id: int, vacancy_id: str) -> bool:
+    async with await _connect() as db:
+        cur = await db.execute(
+            "SELECT 1 FROM applied WHERE user_id = ? AND vacancy_id = ?",
+            (user_id, vacancy_id),
+        )
+        return await cur.fetchone() is not None
+
+
+# ==================== ПОДПИСКИ ====================
+
+async def add_subscription(
+    user_id: int,
+    query: str,
+    city: str = None,
+    city_name: str = None,
+    experience: str = None,
+    schedule: str = None,
+    min_salary: int = None,
+    exclude_words: List[str] = None,
+) -> int:
+    async with await _connect() as db:
+        cursor = await db.execute(
+            """
+            INSERT INTO subscriptions
+            (user_id, query, city, city_name, experience, schedule, min_salary, exclude_words)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                query,
+                city,
+                city_name,
+                experience,
+                schedule,
+                min_salary,
+                _json_dumps(exclude_words or []),
+            ),
+        )
+        await db.commit()
+        return int(cursor.lastrowid)
 
 
 async def get_subscriptions(user_id: int, active_only: bool = True) -> List[Subscription]:
-    async with aiosqlite.connect(DATABASE) as db:
+    async with await _connect() as db:
         sql = "SELECT * FROM subscriptions WHERE user_id = ?"
+        params = [user_id]
         if active_only:
             sql += " AND active = 1"
-        cursor = await db.execute(sql, (user_id,))
+        cursor = await db.execute(sql, params)
         rows = await cursor.fetchall()
-        
-        result = []
-        for row in rows:
-            result.append(Subscription(
-                id=row[0], user_id=row[1], query=row[2], city=row[3],
-                city_name=row[4], experience=row[5], schedule=row[6],
-                min_salary=row[7], exclude_words=row[8],
-                last_vacancy_id=row[9], last_check=row[10],
-                active=bool(row[11]), created_at=row[12]
-            ))
+
+        result: List[Subscription] = []
+        for r in rows:
+            result.append(
+                Subscription(
+                    id=int(r["id"]),
+                    user_id=int(r["user_id"]),
+                    query=r["query"],
+                    city=r["city"],
+                    city_name=r["city_name"],
+                    experience=r["experience"],
+                    schedule=r["schedule"],
+                    min_salary=r["min_salary"],
+                    exclude_words=r["exclude_words"] or "[]",
+                    last_vacancy_id=r["last_vacancy_id"],
+                    last_check=r["last_check"],
+                    active=bool(r["active"]),
+                    created_at=r["created_at"],
+                )
+            )
         return result
 
 
 async def get_all_active_subscriptions() -> List[Subscription]:
     """Получить все активные подписки всех пользователей"""
-    async with aiosqlite.connect(DATABASE) as db:
+    async with await _connect() as db:
         cursor = await db.execute("SELECT * FROM subscriptions WHERE active = 1")
         rows = await cursor.fetchall()
-        
-        result = []
-        for row in rows:
-            result.append(Subscription(
-                id=row[0], user_id=row[1], query=row[2], city=row[3],
-                city_name=row[4], experience=row[5], schedule=row[6],
-                min_salary=row[7], exclude_words=row[8],
-                last_vacancy_id=row[9], last_check=row[10],
-                active=bool(row[11]), created_at=row[12]
-            ))
+
+        result: List[Subscription] = []
+        for r in rows:
+            result.append(
+                Subscription(
+                    id=int(r["id"]),
+                    user_id=int(r["user_id"]),
+                    query=r["query"],
+                    city=r["city"],
+                    city_name=r["city_name"],
+                    experience=r["experience"],
+                    schedule=r["schedule"],
+                    min_salary=r["min_salary"],
+                    exclude_words=r["exclude_words"] or "[]",
+                    last_vacancy_id=r["last_vacancy_id"],
+                    last_check=r["last_check"],
+                    active=bool(r["active"]),
+                    created_at=r["created_at"],
+                )
+            )
         return result
 
 
 async def get_subscriptions_count(user_id: int) -> int:
-    async with aiosqlite.connect(DATABASE) as db:
-        cursor = await db.execute("SELECT COUNT(*) FROM subscriptions WHERE user_id = ? AND active = 1", (user_id,))
+    async with await _connect() as db:
+        cursor = await db.execute(
+            "SELECT COUNT(*) AS c FROM subscriptions WHERE user_id = ? AND active = 1",
+            (user_id,),
+        )
         row = await cursor.fetchone()
-        return row[0] if row else 0
+        return int(row["c"]) if row else 0
 
 
-async def delete_subscription(sub_id: int, user_id: int):
-    async with aiosqlite.connect(DATABASE) as db:
-        await db.execute("DELETE FROM subscriptions WHERE id = ? AND user_id = ?", (sub_id, user_id))
+async def delete_subscription(sub_id: int, user_id: Optional[int] = None):
+    """
+    Совместимость:
+    - старый вызов: delete_subscription(sub_id, user_id)
+    - новый вызов: delete_subscription(sub_id)
+    """
+    async with await _connect() as db:
+        if user_id is None:
+            await db.execute("DELETE FROM subscriptions WHERE id = ?", (sub_id,))
+        else:
+            await db.execute("DELETE FROM subscriptions WHERE id = ? AND user_id = ?", (sub_id, user_id))
         await db.commit()
 
 
 async def toggle_subscription(sub_id: int, user_id: int) -> bool:
-    async with aiosqlite.connect(DATABASE) as db:
-        cursor = await db.execute("SELECT active FROM subscriptions WHERE id = ? AND user_id = ?", (sub_id, user_id))
+    async with await _connect() as db:
+        cursor = await db.execute(
+            "SELECT active FROM subscriptions WHERE id = ? AND user_id = ?",
+            (sub_id, user_id),
+        )
         row = await cursor.fetchone()
-        if row:
-            new_status = not row[0]
-            await db.execute("UPDATE subscriptions SET active = ? WHERE id = ?", (new_status, sub_id))
-            await db.commit()
-            return new_status
-        return False
+        if not row:
+            return False
+
+        new_status = 0 if bool(row["active"]) else 1
+        await db.execute("UPDATE subscriptions SET active = ? WHERE id = ?", (new_status, sub_id))
+        await db.commit()
+        return bool(new_status)
+
+
+async def set_subscription_active(sub_id: int, active: bool):
+    """Удобная функция под новый код (pause/resume)."""
+    async with await _connect() as db:
+        await db.execute("UPDATE subscriptions SET active = ? WHERE id = ?", (1 if active else 0, sub_id))
+        await db.commit()
 
 
 async def update_subscription_last_check(sub_id: int, last_vacancy_id: str = None):
     """Обновить время последней проверки подписки"""
-    async with aiosqlite.connect(DATABASE) as db:
+    async with await _connect() as db:
         if last_vacancy_id:
             await db.execute(
                 "UPDATE subscriptions SET last_check = ?, last_vacancy_id = ? WHERE id = ?",
-                (datetime.now().isoformat(), last_vacancy_id, sub_id)
+                (_now_iso(), last_vacancy_id, sub_id),
             )
         else:
             await db.execute(
                 "UPDATE subscriptions SET last_check = ? WHERE id = ?",
-                (datetime.now().isoformat(), sub_id)
+                (_now_iso(), sub_id),
             )
         await db.commit()
+
+
+# Alias под новый код (если пригодится)
+async def list_subscriptions(user_id: int, limit: int = 50) -> List[Subscription]:
+    subs = await get_subscriptions(user_id, active_only=False)
+    return subs[:limit]
+
+
+async def get_active_subscriptions() -> List[Subscription]:
+    return await get_all_active_subscriptions()
+
+
+async def touch_subscription_checked(sub_id: int) -> None:
+    await update_subscription_last_check(sub_id)
 
 
 # ==================== УВЕДОМЛЕНИЯ ====================
 
 async def was_notification_sent(user_id: int, subscription_id: int, vacancy_id: str) -> bool:
-    """Проверить, было ли отправлено уведомление"""
-    async with aiosqlite.connect(DATABASE) as db:
+    async with await _connect() as db:
         cursor = await db.execute(
-            "SELECT 1 FROM sent_notifications WHERE user_id = ? AND subscription_id = ? AND vacancy_id = ?",
-            (user_id, subscription_id, vacancy_id)
+            """
+            SELECT 1
+            FROM sent_notifications
+            WHERE user_id = ? AND subscription_id = ? AND vacancy_id = ?
+            """,
+            (user_id, subscription_id, vacancy_id),
         )
         return await cursor.fetchone() is not None
 
 
 async def mark_notification_sent(user_id: int, subscription_id: int, vacancy_id: str):
-    """Отметить уведомление как отправленное"""
-    async with aiosqlite.connect(DATABASE) as db:
-        try:
-            await db.execute(
-                "INSERT INTO sent_notifications (user_id, subscription_id, vacancy_id) VALUES (?, ?, ?)",
-                (user_id, subscription_id, vacancy_id)
-            )
-            await db.commit()
-        except:
-            pass
+    async with await _connect() as db:
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO sent_notifications (user_id, subscription_id, vacancy_id)
+            VALUES (?, ?, ?)
+            """,
+            (user_id, subscription_id, vacancy_id),
+        )
+        await db.commit()
 
 
 async def cleanup_old_notifications(days: int = 7):
-    """Удалить старые уведомления"""
-    async with aiosqlite.connect(DATABASE) as db:
+    async with await _connect() as db:
         await db.execute(
             "DELETE FROM sent_notifications WHERE sent_at < datetime('now', ?)",
-            (f'-{days} days',)
+            (f"-{days} days",),
         )
         await db.commit()
 
@@ -447,54 +754,115 @@ async def cleanup_old_notifications(days: int = 7):
 # ==================== ТИКЕТЫ ПОДДЕРЖКИ ====================
 
 async def create_ticket(user_id: int, username: str = None) -> int:
-    async with aiosqlite.connect(DATABASE) as db:
-        cursor = await db.execute("INSERT INTO tickets (user_id, username) VALUES (?, ?)", (user_id, username))
+    async with await _connect() as db:
+        cursor = await db.execute(
+            "INSERT INTO tickets (user_id, username) VALUES (?, ?)",
+            (user_id, username),
+        )
         await db.commit()
-        return cursor.lastrowid
+        return int(cursor.lastrowid)
 
 
 async def get_open_ticket(user_id: int) -> Optional[dict]:
-    async with aiosqlite.connect(DATABASE) as db:
+    async with await _connect() as db:
         cursor = await db.execute(
-            "SELECT id, user_id, username, status, created_at FROM tickets WHERE user_id = ? AND status = 'open'",
-            (user_id,)
+            """
+            SELECT id, user_id, username, status, created_at
+            FROM tickets
+            WHERE user_id = ? AND status = 'open'
+            """,
+            (user_id,),
         )
         row = await cursor.fetchone()
         if row:
-            return {"id": row[0], "user_id": row[1], "username": row[2], "status": row[3], "created_at": row[4]}
+            return {
+                "id": int(row["id"]),
+                "user_id": int(row["user_id"]),
+                "username": row["username"],
+                "status": row["status"],
+                "created_at": row["created_at"],
+            }
     return None
 
 
 async def get_ticket_by_id(ticket_id: int) -> Optional[dict]:
-    async with aiosqlite.connect(DATABASE) as db:
-        cursor = await db.execute("SELECT id, user_id, username, status, created_at FROM tickets WHERE id = ?", (ticket_id,))
+    async with await _connect() as db:
+        cursor = await db.execute(
+            """
+            SELECT id, user_id, username, status, created_at
+            FROM tickets
+            WHERE id = ?
+            """,
+            (ticket_id,),
+        )
         row = await cursor.fetchone()
         if row:
-            return {"id": row[0], "user_id": row[1], "username": row[2], "status": row[3], "created_at": row[4]}
+            return {
+                "id": int(row["id"]),
+                "user_id": int(row["user_id"]),
+                "username": row["username"],
+                "status": row["status"],
+                "created_at": row["created_at"],
+            }
     return None
 
 
 async def get_all_open_tickets() -> List[dict]:
-    async with aiosqlite.connect(DATABASE) as db:
-        cursor = await db.execute("SELECT id, user_id, username, status, created_at FROM tickets WHERE status = 'open' ORDER BY created_at DESC")
+    async with await _connect() as db:
+        cursor = await db.execute(
+            """
+            SELECT id, user_id, username, status, created_at
+            FROM tickets
+            WHERE status = 'open'
+            ORDER BY created_at DESC
+            """
+        )
         rows = await cursor.fetchall()
-        return [{"id": r[0], "user_id": r[1], "username": r[2], "status": r[3], "created_at": r[4]} for r in rows]
+        return [
+            {
+                "id": int(r["id"]),
+                "user_id": int(r["user_id"]),
+                "username": r["username"],
+                "status": r["status"],
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
 
 
 async def close_ticket(ticket_id: int):
-    async with aiosqlite.connect(DATABASE) as db:
+    async with await _connect() as db:
         await db.execute("UPDATE tickets SET status = 'closed' WHERE id = ?", (ticket_id,))
         await db.commit()
 
 
 async def add_ticket_message(ticket_id: int, sender_type: str, message: str):
-    async with aiosqlite.connect(DATABASE) as db:
-        await db.execute("INSERT INTO ticket_messages (ticket_id, sender_type, message) VALUES (?, ?, ?)", (ticket_id, sender_type, message))
+    async with await _connect() as db:
+        await db.execute(
+            "INSERT INTO ticket_messages (ticket_id, sender_type, message) VALUES (?, ?, ?)",
+            (ticket_id, sender_type, message),
+        )
         await db.commit()
 
 
 async def get_ticket_messages(ticket_id: int) -> List[dict]:
-    async with aiosqlite.connect(DATABASE) as db:
-        cursor = await db.execute("SELECT id, sender_type, message, created_at FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at", (ticket_id,))
+    async with await _connect() as db:
+        cursor = await db.execute(
+            """
+            SELECT id, sender_type, message, created_at
+            FROM ticket_messages
+            WHERE ticket_id = ?
+            ORDER BY created_at
+            """,
+            (ticket_id,),
+        )
         rows = await cursor.fetchall()
-        return [{"id": r[0], "sender_type": r[1], "message": r[2], "created_at": r[3]} for r in rows]
+        return [
+            {
+                "id": int(r["id"]),
+                "sender_type": r["sender_type"],
+                "message": r["message"],
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
