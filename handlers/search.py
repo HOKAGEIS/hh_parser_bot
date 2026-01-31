@@ -12,7 +12,7 @@ from aiogram.types import Message, CallbackQuery
 import database as db
 import keyboards as kb
 from hh_api import hh, Vacancy
-from config import Config  # Исправлен импорт
+from config import Config
 
 router = Router()
 
@@ -78,6 +78,124 @@ def _format_salary_obj(v) -> str:
         return f"до {to:,} {cur_sym}".replace(",", " ")
     return "не указана"
 
+
+def _safe_edit_text(message, text, reply_markup=None, parse_mode=None, disable_web_page_preview=None):
+    """Безопасное редактирование текста сообщения"""
+    try:
+        return message.edit_text(
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+            disable_web_page_preview=disable_web_page_preview
+        )
+    except TelegramBadRequest:
+        return message.answer(text=text, reply_markup=reply_markup, parse_mode=parse_mode)
+
+
+def _vacancy_to_short_dict(vacancy):
+    """Преобразование объекта вакансии в словарь для кэширования"""
+    return {
+        'id': getattr(vacancy, 'id', ''),
+        'name': getattr(vacancy, 'name', ''),
+        'employer': getattr(vacancy, 'employer', ''),
+        'salary': getattr(vacancy, 'salary', ''),
+        'url': getattr(vacancy, 'url', ''),
+        'city': getattr(vacancy, 'city', ''),
+        'experience': getattr(vacancy, 'experience', ''),
+        'schedule': getattr(vacancy, 'schedule', ''),
+    }
+
+
+def _vacancy_from_short_dict(data):
+    """Восстановление объекта вакансии из словаря"""
+    class TempVacancy:
+        def __init__(self, data):
+            for key, value in data.items():
+                setattr(self, key, value)
+    
+    return TempVacancy(data)
+
+
+async def _get_vacancy_at_index(state: FSMContext, index: int):
+    """Получение вакансии по индексу с возможной подгрузкой"""
+    data = await state.get_data()
+    cache_vacancies = data.get("cache_vacancies", [])
+    total = data.get("total", 0)
+    
+    if index < len(cache_vacancies):
+        return _vacancy_from_short_dict(cache_vacancies[index]), total
+    
+    # Если вакансия не в кэше, подгружаем страницу
+    page = index // Config.VACANCIES_PER_PAGE
+    per_page = Config.VACANCIES_PER_PAGE
+    
+    search_data = {k: v for k, v in data.items() if k in [
+        'query', 'city', 'experience', 'schedule', 'salary', 'only_with_salary', 'exclude_words'
+    ]}
+    
+    vacancies, total = await hh.search_vacancies(
+        text=search_data.get('query'),
+        area=search_data.get('city'),
+        experience=search_data.get('experience'),
+        schedule=search_data.get('schedule'),
+        salary=search_data.get('salary'),
+        only_with_salary=search_data.get('only_with_salary', False),
+        exclude_words=search_data.get('exclude_words', []),
+        page=page,
+        per_page=per_page,
+    )
+    
+    new_cache = [_vacancy_to_short_dict(v) for v in vacancies]
+    
+    await state.update_data(
+        cache_page=page,
+        cache_vacancies=new_cache,
+        total=total
+    )
+    
+    target_idx = index % Config.VACANCIES_PER_PAGE
+    if target_idx < len(new_cache):
+        return _vacancy_from_short_dict(new_cache[target_idx]), total
+    
+    return None, total
+
+
+async def show_vacancy_message(message, vacancy, index: int, total: int, user_id: int, is_authorized: bool):
+    """Отображение сообщения с вакансией"""
+    salary = getattr(vacancy, 'salary', 'не указана')
+    city = getattr(vacancy, 'city', 'не указан')
+    experience = getattr(vacancy, 'experience', 'не указан')
+    schedule = getattr(vacancy, 'schedule', 'не указан')
+    
+    text = (
+        f"💼 <b>{vacancy.name}</b>\n\n"
+        f"🏢 <b>Компания:</b> {vacancy.employer}\n"
+        f"📍 <b>Город:</b> {city}\n"
+        f"💰 <b>Зарплата:</b> {salary}\n"
+        f"💼 <b>Опыт:</b> {experience}\n"
+        f"⏰ <b>График:</b> {schedule}\n\n"
+        f"🔗 <a href='{vacancy.url}'>Открыть вакансию</a>"
+    )
+    
+    is_fav = await db.is_favorite(user_id, vacancy.id)
+    is_applied = await db.was_applied(user_id, vacancy.id)
+    
+    await _safe_edit_text(
+        message,
+        text,
+        reply_markup=kb.vacancy_kb(
+            vacancy_id=vacancy.id,
+            is_fav=is_fav,
+            current_index=index,
+            total=total,
+            is_applied=is_applied,
+            is_authorized=is_authorized
+        ),
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+
+
 # ==================== НАЧАЛО ПОИСКА ====================
 
 @router.message(F.text == "🔍 Поиск вакансий")
@@ -103,15 +221,15 @@ async def process_search_query(message: Message, state: FSMContext):
         await message.answer("⚠️ Запрос слишком короткий. Минимум 2 символа.")
         return
 
-    user = db.get_user(message.from_user.id)  # Убран await
+    user = await db.get_user(message.from_user.id)  # Исправлено: добавлен await
 
     await state.update_data(
         query=query,
-        city=getattr(user, 'default_city', None),
-        city_name=getattr(user, 'default_city_name', None),
-        experience=getattr(user, 'default_experience', None),
-        schedule=getattr(user, 'default_schedule', None),
-        salary=getattr(user, 'min_salary', None),
+        city=getattr(user, 'city_id', None),
+        city_name=getattr(user, 'city_name', None),
+        experience=getattr(user, 'experience', None),
+        schedule=getattr(user, 'schedule', None),
+        salary=getattr(user, 'salary_from', None),
         only_with_salary=getattr(user, 'only_with_salary', False),
         exclude_words=getattr(user, 'exclude_words', []),
         current_index=0,
@@ -125,11 +243,9 @@ async def process_search_query(message: Message, state: FSMContext):
 
     # ✅ сохраняем в историю
     data = await state.get_data()
-    await db.add_search_history(
+    await db.save_search_query(
         user_id=message.from_user.id,
         query=query,
-        city=data.get("city"),
-        city_name=data.get("city_name"),
         filters={
             "experience": data.get("experience"),
             "schedule": data.get("schedule"),
@@ -591,14 +707,18 @@ async def execute_search(callback: CallbackQuery, state: FSMContext):
 
     per_page = int(data.get("per_page") or Config.VACANCIES_PER_PAGE)
 
+    search_data = {k: v for k, v in data.items() if k in [
+        'query', 'city', 'experience', 'schedule', 'salary', 'only_with_salary', 'exclude_words'
+    ]}
+
     vacancies, total = await hh.search_vacancies(
-        text=data.get("query"),
-        area=data.get("city"),
-        experience=data.get("experience"),
-        schedule=data.get("schedule"),
-        salary=data.get("salary"),
-        only_with_salary=data.get("only_with_salary", False),
-        exclude_words=data.get("exclude_words", []),
+        text=search_data.get('query'),
+        area=search_data.get('city'),
+        experience=search_data.get('experience'),
+        schedule=search_data.get('schedule'),
+        salary=search_data.get('salary'),
+        only_with_salary=search_data.get('only_with_salary', False),
+        exclude_words=search_data.get('exclude_words', []),
         page=0,
         per_page=per_page,
     )
@@ -626,7 +746,7 @@ async def execute_search(callback: CallbackQuery, state: FSMContext):
     )
     await state.set_state(SearchStates.viewing_results)
 
-    user = db.get_user(callback.from_user.id)  # Убран await
+    user = await db.get_user(callback.from_user.id)  # Исправлено: добавлен await
     is_authorized = bool(user and getattr(user, 'hh_access_token', None))
 
     first = _vacancy_from_short_dict(cache_vacancies[0])
@@ -679,7 +799,7 @@ async def change_page(callback: CallbackQuery, state: FSMContext):
 
     await state.update_data(current_index=index, total=total2)
 
-    user = db.get_user(callback.from_user.id)  # Убран await
+    user = await db.get_user(callback.from_user.id)  # Исправлено: добавлен await
     is_authorized = bool(user and getattr(user, 'hh_access_token', None))
 
     await show_vacancy_message(callback.message, vacancy, index, total2, callback.from_user.id, is_authorized)
@@ -699,7 +819,7 @@ async def show_full_vacancy(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ Не удалось загрузить вакансию", show_alert=True)
         return
 
-    user = db.get_user(callback.from_user.id)  # Убран await
+    user = await db.get_user(callback.from_user.id)  # Исправлено: добавлен await
     is_authorized = bool(user and getattr(user, "hh_access_token", None))
     is_applied = await db.was_applied(callback.from_user.id, vacancy_id)
 
@@ -783,6 +903,8 @@ async def show_full_vacancy(callback: CallbackQuery, state: FSMContext):
         disable_web_page_preview=True,
     )
     await callback.answer()
+
+
 # ==================== ИЗБРАННОЕ ====================
 
 async def _refresh_current_markup(callback: CallbackQuery, state: FSMContext, vacancy_id: str):
@@ -790,7 +912,7 @@ async def _refresh_current_markup(callback: CallbackQuery, state: FSMContext, va
     total = int(data.get("total") or 0)
     current_index = int(data.get("current_index") or 0)
 
-    user = db.get_user(callback.from_user.id)  # Убран await
+    user = await db.get_user(callback.from_user.id)  # Исправлено: добавлен await
     is_authorized = bool(user and getattr(user, 'hh_access_token', None))
 
     is_fav = await db.is_favorite(callback.from_user.id, vacancy_id)
@@ -815,7 +937,7 @@ async def _refresh_current_markup(callback: CallbackQuery, state: FSMContext, va
 async def add_to_fav(callback: CallbackQuery, state: FSMContext):
     vacancy_id = callback.data.replace("fav_", "", 1)
 
-    # Пытаемся сохранить данные вакансии из кеша (если есть)
+    # Пытаемся получить данные вакансии из состояния (если есть)
     data = await state.get_data()
     vacancy_data = None
     for v in (data.get("cache_vacancies") or []):
@@ -824,21 +946,31 @@ async def add_to_fav(callback: CallbackQuery, state: FSMContext):
             break
 
     if vacancy_data:
-        await db.add_favorite(callback.from_user.id, vacancy_id, vacancy_data)
-        await callback.answer("⭐ Добавлено в избранное!")
-        await _refresh_current_markup(callback, state, vacancy_id)
+        success = await db.add_favorite(callback.from_user.id, vacancy_id, vacancy_data)
+        if success:
+            await callback.answer("⭐ Добавлено в избранное!")
+            await _refresh_current_markup(callback, state, vacancy_id)
+        else:
+            await callback.answer("⚠️ Уже в избранном")
     else:
-        # Даже без данных — хотя бы отметим
-        await db.add_favorite(callback.from_user.id, vacancy_id, {"id": vacancy_id})
-        await callback.answer("⭐ Добавлено в избранное!")
-        await _refresh_current_markup(callback, state, vacancy_id)
+        # Если данных нет в кэше, просто добавляем ID
+        temp_data = {"id": vacancy_id}
+        success = await db.add_favorite(callback.from_user.id, vacancy_id, temp_data)
+        if success:
+            await callback.answer("⭐ Добавлено в избранное!")
+            await _refresh_current_markup(callback, state, vacancy_id)
+        else:
+            await callback.answer("⚠️ Уже в избранном")
 
 
 @router.callback_query(F.data.startswith("unfav_"))
 async def remove_from_fav(callback: CallbackQuery, state: FSMContext):
     vacancy_id = callback.data.replace("unfav_", "", 1)
-    await db.remove_favorite(callback.from_user.id, vacancy_id)
-    await callback.answer("💔 Удалено из избранного")
+    removed = await db.remove_favorite(callback.from_user.id, vacancy_id)
+    if removed:
+        await callback.answer("💔 Удалено из избранного")
+    else:
+        await callback.answer("⚠️ Не найдено в избранном")
     await _refresh_current_markup(callback, state, vacancy_id)
 
 
@@ -858,18 +990,28 @@ async def subscribe_from_search(callback: CallbackQuery, state: FSMContext):
         await callback.answer("⚠️ Нет активного поиска", show_alert=True)
         return
 
-    await db.add_subscription(
+    # Подготовка фильтров для подписки
+    filters = {
+        'city': data.get('city'),
+        'city_name': data.get('city_name'),
+        'experience': data.get('experience'),
+        'schedule': data.get('schedule'),
+        'salary': data.get('salary'),
+        'only_with_salary': data.get('only_with_salary', False),
+        'exclude_words': data.get('exclude_words', []),
+    }
+
+    sub_id = await db.add_subscription(
         user_id=callback.from_user.id,
+        name=f"Подписка: {query[:50]}",
         query=query,
-        city=data.get("city"),
-        city_name=data.get("city_name"),
-        experience=data.get("experience"),
-        schedule=data.get("schedule"),
-        min_salary=data.get("salary"),
-        exclude_words=data.get("exclude_words", []),
+        filters=filters
     )
 
-    await callback.answer(f"🔔 Подписка на «{query}» создана!", show_alert=True)
+    if sub_id:
+        await callback.answer(f"🔔 Подписка на «{query}» создана!", show_alert=True)
+    else:
+        await callback.answer("⚠️ Ошибка создания подписки", show_alert=True)
 
 
 # ==================== ЗАКРЫТЬ / ОТМЕНА ====================
@@ -956,17 +1098,17 @@ async def repeat_search_from_history(callback: CallbackQuery, state: FSMContext)
         await callback.answer("Пустой запрос", show_alert=True)
         return
 
-    user = db.get_user(callback.from_user.id)  # Убран await
+    user = await db.get_user(callback.from_user.id)  # Исправлено: добавлен await
     filters = item.get("filters") or {}
 
     await state.clear()
     await state.update_data(
         query=query,
-        city=item.get("city") or (getattr(user, 'default_city', None)),
-        city_name=item.get("city_name") or (getattr(user, 'default_city_name', None)),
-        experience=filters.get("experience") or (getattr(user, 'default_experience', None)),
-        schedule=filters.get("schedule") or (getattr(user, 'default_schedule', None)),
-        salary=filters.get("salary") or (getattr(user, 'min_salary', None)),
+        city=item.get("city") or (getattr(user, 'city_id', None)),
+        city_name=item.get("city_name") or (getattr(user, 'city_name', None)),
+        experience=filters.get("experience") or (getattr(user, 'experience', None)),
+        schedule=filters.get("schedule") or (getattr(user, 'schedule', None)),
+        salary=filters.get("salary") or (getattr(user, 'salary_from', None)),
         only_with_salary=filters.get("only_with_salary") if "only_with_salary" in filters else (getattr(user, 'only_with_salary', False)),
         exclude_words=filters.get("exclude_words") or (getattr(user, 'exclude_words', [])),
         current_index=0,
