@@ -195,7 +195,7 @@ def search_history_kb(history: List[dict]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     if not history:
-        builder.row(InlineKeyboardButton(text="ostringstream", callback_data="history_empty"))
+        builder.row(InlineKeyboardButton(text="📭 История пуста", callback_data="history_empty"))
     else:
         for i, item in enumerate(history[:10]):
             query = (item.get("query", "") or "")[:25]
