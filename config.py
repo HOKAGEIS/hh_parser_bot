@@ -13,3 +13,6 @@ class Config:
     def validate(cls):
         if not cls.BOT_TOKEN:
             raise ValueError("TELEGRAM_BOT_TOKEN must be set in environment variables")
+
+# ДОБАВЬТЕ ЭТУ СТРОКУ! ↓
+config = Config()
