@@ -1187,3 +1187,930 @@ async def repeat_search_from_history(callback: CallbackQuery, state: FSMContext)
         parse_mode="HTML",
     )
     await callback.answer("✅ Загружено")
+
+# ==================== ФИЛЬТРЫ ====================
+
+@router.callback_query(F.data == "back_to_filters")
+async def back_to_filters(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(None)
+    data = await state.get_data()
+
+    await _safe_edit_text(
+        callback.message,
+        f"🔍 Запрос: <b>{data.get('query')}</b>\n\n"
+        "Настройте фильтры:",
+        reply_markup=kb.filters_kb(data),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+# ==================== ГОРОД ====================
+
+@router.callback_query(F.data == "filter_city")
+async def filter_city(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(None)
+    await _safe_edit_text(
+        callback.message,
+        "📍 <b>Выберите город</b>\n\n"
+        "Выберите из списка или введите вручную:",
+        reply_markup=kb.cities_kb(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "enter_city_manual")
+async def enter_city_manual(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(SearchStates.entering_city)
+
+    await _safe_edit_text(
+        callback.message,
+        "📍 <b>Введите название города:</b>\n\n"
+        "<i>Например: Воронеж, Тюмень, Владивосток</i>",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(SearchStates.entering_city, F.text)
+async def process_city_input(message: Message, state: FSMContext):
+    city_name = (message.text or "").strip()
+    if len(city_name) < 2:
+        await message.answer("⚠️ Слишком короткое название")
+        return
+
+    await message.answer("🔍 Ищу город...")
+
+    cities = await hh.search_area(city_name)
+    if not cities:
+        await message.answer(
+            f"😔 Город «{city_name}» не найден.\n\n"
+            "Попробуйте другое название:",
+            reply_markup=kb.back_kb("filter_city"),
+        )
+        return
+
+    if len(cities) == 1:
+        city = cities[0]
+        name = city.get("text", city.get("name"))
+        await state.update_data(city=str(city.get("id")), city_name=name)
+        await state.set_state(None)
+
+        data = await state.get_data()
+        await message.answer(
+            f"✅ Выбран город: <b>{name}</b>\n\n"
+            f"🔍 Запрос: <b>{data.get('query')}</b>",
+            reply_markup=kb.filters_kb(data),
+            parse_mode="HTML",
+        )
+        return
+
+    variants = {str(c.get("id")): c.get("text", c.get("name")) for c in cities}
+    await state.update_data(city_variants=variants)
+    await state.set_state(None)
+
+    await message.answer(
+        f"📍 Найдено несколько городов по запросу «{city_name}»:\n\n"
+        "Выберите нужный:",
+        reply_markup=kb.found_cities_kb(cities),
+    )
+
+
+@router.message(SearchStates.entering_city)
+async def process_city_input_not_text(message: Message, state: FSMContext):
+    await message.answer("⚠️ Пожалуйста, введите название города текстом")
+
+
+@router.callback_query(F.data.startswith("set_city_"))
+async def set_city(callback: CallbackQuery, state: FSMContext):
+    payload = callback.data.replace("set_city_", "", 1)
+
+    if payload == "any":
+        await state.update_data(city=None, city_name=None)
+        city_display = "Любой"
+    else:
+        city_id = payload
+        data = await state.get_data()
+        city_name = (data.get("city_variants") or {}).get(str(city_id), f"ID {city_id}")
+        await state.update_data(city=str(city_id), city_name=city_name)
+        city_display = city_name
+
+    data = await state.get_data()
+    await _safe_edit_text(
+        callback.message,
+        f"✅ Город: <b>{city_display}</b>\n\n"
+        f"🔍 Запрос: <b>{data.get('query')}</b>",
+        reply_markup=kb.filters_kb(data),
+        parse_mode="HTML",
+    )
+    await callback.answer(f"✅ Выбрано: {city_display}")
+
+
+# ==================== ГЕОЛОКАЦИЯ ====================
+
+@router.callback_query(F.data == "request_location")
+async def request_location(callback: CallbackQuery):
+    await callback.message.answer(
+        "📍 <b>Отправьте ваше местоположение</b>\n\n"
+        "Нажмите на кнопку 📍 'Отправить местоположение' внизу экрана.",
+        reply_markup=kb.location_request_kb(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.message(F.location)
+async def process_location(message: Message, state: FSMContext):
+    lat = message.location.latitude
+    lon = message.location.longitude
+
+    await message.answer("🔍 Ищу город по координатам...")
+
+    city_name = await hh.search_area_by_coordinates(lat, lon)
+    if not city_name:
+        await message.answer(
+            "😔 Не удалось определить город по координатам.\n\n"
+            "Попробуйте ввести название вручную:",
+            reply_markup=kb.back_kb("filter_city")
+        )
+        return
+
+    city_id = None
+    for id, name in Config.POPULAR_CITIES.items():
+        if name.lower() == city_name.lower():
+            city_id = id
+            break
+
+    if not city_id:
+        cities = await hh.search_area(city_name)
+        if cities:
+            city_id = str(cities[0].get("id"))
+            city_name = cities[0].get("text", cities[0].get("name", city_name))
+
+    if city_id:
+        await state.update_data(city=city_id, city_name=city_name)
+
+        data = await state.get_data()
+        await message.answer(
+            f"✅ Определён город: <b>{city_name}</b>\n\n"
+            f"🔍 Запрос: <b>{data.get('query')}</b>",
+            reply_markup=kb.filters_kb(data),
+            parse_mode="HTML"
+        )
+    else:
+        await message.answer(
+            "😔 Не удалось определить город.\n\n"
+            "Попробуйте ввести название вручную:",
+            reply_markup=kb.back_kb("filter_city")
+        )
+
+
+# ==================== ОТМЕНА ГЕОЛОКАЦИИ ====================
+
+@router.message(F.text == "❌ Отмена", SearchStates.entering_city)
+async def cancel_location_request(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "❌ Отменено",
+        reply_markup=kb.main_menu_kb(message.from_user.id)
+    )
+
+
+# ==================== ЗАРПЛАТА ====================
+
+@router.callback_query(F.data == "filter_salary")
+async def filter_salary(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(None)
+    await _safe_edit_text(
+        callback.message,
+        "💰 <b>Минимальная зарплата</b>\n\n"
+        "Выберите или введите свою сумму:",
+        reply_markup=kb.salary_kb(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "enter_salary_manual")
+async def enter_salary_manual(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(SearchStates.entering_salary)
+    await _safe_edit_text(
+        callback.message,
+        "💰 <b>Введите минимальную зарплату</b>\n\n"
+        "Введите число (только цифры):\n\n"
+        "<i>Например: 80000, 150000, 250000</i>",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(SearchStates.entering_salary, F.text)
+async def process_salary_input(message: Message, state: FSMContext):
+    raw = message.text or ""
+    salary_text = "".join(filter(str.isdigit, raw))
+
+    if not salary_text:
+        await message.answer("⚠️ Введите число. Например: 100000")
+        return
+
+    try:
+        salary = int(salary_text)
+    except ValueError:
+        await message.answer("⚠️ Введите число. Например: 100000")
+        return
+
+    if salary < 1000:
+        await message.answer("⚠️ Слишком маленькая сумма. Введите в рублях (например: 50000)")
+        return
+    if salary > 10_000_000:
+        await message.answer("⚠️ Слишком большая сумма. Максимум 10 000 000")
+        return
+
+    await state.update_data(salary=salary)
+    await state.set_state(None)
+
+    data = await state.get_data()
+    await message.answer(
+        f"✅ Зарплата: от <b>{salary:,}₽</b>\n\n".replace(",", " ")
+        + f"🔍 Запрос: <b>{data.get('query')}</b>",
+        reply_markup=kb.filters_kb(data),
+        parse_mode="HTML",
+    )
+
+
+@router.message(SearchStates.entering_salary)
+async def process_salary_input_not_text(message: Message, state: FSMContext):
+    await message.answer("⚠️ Введите число")
+
+
+@router.callback_query(F.data.startswith("set_salary_"))
+async def set_salary(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(None)
+
+    salary_str = callback.data.replace("set_salary_", "", 1)
+    if salary_str == "any":
+        salary = None
+        salary_display = "Любая"
+    else:
+        try:
+            salary = int(salary_str)
+        except ValueError:
+            await callback.answer("Ошибка суммы", show_alert=True)
+            return
+        salary_display = f"от {salary:,}₽".replace(",", " ")
+
+    await state.update_data(salary=salary)
+    data = await state.get_data()
+
+    await _safe_edit_text(
+        callback.message,
+        f"✅ Зарплата: <b>{salary_display}</b>\n\n"
+        f"🔍 Запрос: <b>{data.get('query')}</b>",
+        reply_markup=kb.filters_kb(data),
+        parse_mode="HTML",
+    )
+    await callback.answer(f"✅ {salary_display}")
+
+
+# ==================== ИСКЛЮЧЕНИЯ ====================
+
+@router.callback_query(F.data == "filter_exclude")
+async def filter_exclude(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(None)
+
+    data = await state.get_data()
+    words = data.get("exclude_words", [])
+
+    text = "🚫 <b>Слова-исключения</b>\n\n"
+    if words:
+        text += "Вакансии с этими словами не будут показаны:\n"
+        text += ", ".join([f"<code>{w}</code>" for w in words])
+        text += "\n\nНажмите на слово чтобы удалить."
+    else:
+        text += "Список пуст. Добавьте слова, которые хотите исключить из поиска.\n\n"
+        text += "<i>Например: стажёр, junior, менеджер</i>"
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=kb.exclude_words_kb(words),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "add_exclude_word")
+async def add_exclude_word(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(SearchStates.entering_exclude_word)
+    await _safe_edit_text(
+        callback.message,
+        "🚫 <b>Добавить слово-исключение</b>\n\n"
+        "Введите слово или фразу для исключения:\n\n"
+        "<i>Например: стажёр, без опыта, junior</i>",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(SearchStates.entering_exclude_word, F.text)
+async def process_exclude_word(message: Message, state: FSMContext):
+    word = (message.text or "").strip().lower()
+    if len(word) < 2:
+        await message.answer("⚠️ Слишком короткое слово")
+        return
+    if len(word) > 50:
+        await message.answer("⚠️ Слишком длинное слово (макс. 50 символов)")
+        return
+
+    data = await state.get_data()
+    words = data.get("exclude_words", [])
+
+    if len(words) >= Config.MAX_EXCLUDE_WORDS:
+        await message.answer(f"⚠️ Максимум {Config.MAX_EXCLUDE_WORDS} слов")
+        return
+
+    if word not in words:
+        words.append(word)
+        await state.update_data(exclude_words=words)
+
+    await state.set_state(None)
+
+    await message.answer(
+        f"✅ Добавлено: <b>{word}</b>\n\n"
+        f"Исключений: {len(words)}",
+        reply_markup=kb.exclude_words_kb(words),
+        parse_mode="HTML",
+    )
+
+
+@router.message(SearchStates.entering_exclude_word)
+async def process_exclude_word_not_text(message: Message, state: FSMContext):
+    await message.answer("⚠️ Введите слово текстом")
+
+
+@router.callback_query(F.data.startswith("remove_exclude_"))
+async def remove_exclude_word(callback: CallbackQuery, state: FSMContext):
+    idx_str = callback.data.replace("remove_exclude_", "", 1)
+
+    data = await state.get_data()
+    words = data.get("exclude_words", [])
+
+    try:
+        idx = int(idx_str)
+    except ValueError:
+        await callback.answer("Ошибка кнопки", show_alert=True)
+        return
+
+    if 0 <= idx < len(words):
+        removed = words.pop(idx)
+        await state.update_data(exclude_words=words)
+        await callback.answer(f"✅ Удалено: {removed}")
+    else:
+        await callback.answer("Уже удалено", show_alert=False)
+
+    await _safe_edit_text(
+        callback.message,
+        "🚫 <b>Слова-исключения</b>\n\n" +
+        (", ".join([f"<code>{w}</code>" for w in words]) if words else "Список пуст"),
+        reply_markup=kb.exclude_words_kb(words),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "clear_exclude_words")
+async def clear_exclude_words(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(None)
+    await state.update_data(exclude_words=[])
+
+    await _safe_edit_text(
+        callback.message,
+        "🚫 <b>Слова-исключения</b>\n\n"
+        "Список очищен.",
+        reply_markup=kb.exclude_words_kb([]),
+        parse_mode="HTML",
+    )
+    await callback.answer("🗑 Список очищен")
+
+
+# ==================== ОПЫТ И ГРАФИК ====================
+
+@router.callback_query(F.data == "filter_experience")
+async def filter_experience(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(None)
+    await _safe_edit_text(
+        callback.message,
+        "💼 <b>Требуемый опыт работы:</b>",
+        reply_markup=kb.experience_kb(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("set_exp_"))
+async def set_experience(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(None)
+
+    exp = callback.data.replace("set_exp_", "", 1)
+    if exp == "any":
+        exp = None
+
+    await state.update_data(experience=exp)
+    data = await state.get_data()
+
+    await _safe_edit_text(
+        callback.message,
+        f"🔍 Запрос: <b>{data.get('query')}</b>",
+        reply_markup=kb.filters_kb(data),
+        parse_mode="HTML",
+    )
+    await callback.answer("✅ Опыт выбран")
+
+
+@router.callback_query(F.data == "filter_schedule")
+async def filter_schedule(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(None)
+    await _safe_edit_text(
+        callback.message,
+        "⏰ <b>График работы:</b>",
+        reply_markup=kb.schedule_kb(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("set_schedule_"))
+async def set_schedule(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(None)
+
+    schedule = callback.data.replace("set_schedule_", "", 1)
+    if schedule == "any":
+        schedule = None
+
+    await state.update_data(schedule=schedule)
+    data = await state.get_data()
+
+    await _safe_edit_text(
+        callback.message,
+        f"🔍 Запрос: <b>{data.get('query')}</b>",
+        reply_markup=kb.filters_kb(data),
+        parse_mode="HTML",
+    )
+    await callback.answer("✅ График выбран")
+
+
+@router.callback_query(F.data == "filter_reset")
+async def reset_filters(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(None)
+
+    await state.update_data(
+        city=None,
+        city_name=None,
+        experience=None,
+        schedule=None,
+        salary=None,
+        exclude_words=[],
+    )
+
+    data = await state.get_data()
+    await _safe_edit_text(
+        callback.message,
+        f"🔄 Фильтры сброшены\n\n"
+        f"🔍 Запрос: <b>{data.get('query')}</b>",
+        reply_markup=kb.filters_kb(data),
+        parse_mode="HTML",
+    )
+    await callback.answer("🔄 Сброшено")
+
+
+# ==================== ПОИСК ====================
+
+@router.callback_query(F.data == "search_now")
+async def execute_search(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    if not data.get("query"):
+        await callback.answer("⚠️ Сначала введите поисковый запрос", show_alert=True)
+        return
+
+    await _safe_edit_text(callback.message, "🔍 Ищу вакансии...")
+
+    per_page = int(data.get("per_page") or Config.VACANCIES_PER_PAGE)
+
+    search_data = {k: v for k, v in data.items() if k in [
+        'query', 'city', 'experience', 'schedule', 'salary', 'only_with_salary', 'exclude_words'
+    ]}
+
+    vacancies, total = await hh.search_vacancies(
+        text=search_data.get('query'),
+        area=search_data.get('city'),
+        experience=search_data.get('experience'),
+        schedule=search_data.get('schedule'),
+        salary=search_data.get('salary'),
+        only_with_salary=search_data.get('only_with_salary', False),
+        exclude_words=search_data.get('exclude_words', []),
+        page=0,
+        per_page=per_page,
+    )
+
+    if not vacancies:
+        await _safe_edit_text(
+            callback.message,
+            "😔 Ничего не найдено.\n\n"
+            "Попробуйте:\n"
+            "• Изменить запрос\n"
+            "• Сбросить фильтры\n"
+            "• Убрать слова-исключения",
+            reply_markup=kb.filters_kb(data),
+        )
+        await callback.answer()
+        return
+
+    cache_vacancies = [_vacancy_to_short_dict(v) for v in vacancies]
+
+    await state.update_data(
+        current_index=0,
+        total=int(total or 0),
+        cache_page=0,
+        cache_vacancies=cache_vacancies,
+    )
+    await state.set_state(SearchStates.viewing_results)
+
+    user = await db.get_user(callback.from_user.id)
+    is_authorized = bool(user and getattr(user, 'hh_access_token', None))
+
+    first = _vacancy_from_short_dict(cache_vacancies[0])
+    await show_vacancy_message(
+        callback.message,
+        first,
+        index=0,
+        total=int(total or 0),
+        user_id=callback.from_user.id,
+        is_authorized=is_authorized,
+    )
+    await callback.answer()
+
+
+# ==================== НАВИГАЦИЯ ====================
+
+@router.callback_query(SearchStates.viewing_results, F.data.startswith("page_"))
+async def change_page(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+
+    if callback.data == "page_info":
+        total = int(data.get("total") or 0)
+        current_index = int(data.get("current_index") or 0)
+        if total <= 0:
+            await callback.answer("Нет данных", show_alert=True)
+            return
+        await callback.answer(
+            f"Вакансия {current_index + 1} из {total:,}".replace(",", " "),
+            show_alert=True,
+        )
+        return
+
+    try:
+        index = int(callback.data.replace("page_", "", 1))
+    except ValueError:
+        await callback.answer("Ошибка страницы", show_alert=True)
+        return
+
+    total = int(data.get("total") or 0)
+    if total and (index < 0 or index >= total):
+        await callback.answer("Больше вакансий нет")
+        return
+
+    await _safe_edit_text(callback.message, "🔄 Загружаю...")
+
+    vacancy, total2 = await _get_vacancy_at_index(state, index)
+    if not vacancy:
+        await callback.answer("Больше вакансий нет")
+        return
+
+    await state.update_data(current_index=index, total=total2)
+
+    user = await db.get_user(callback.from_user.id)
+    is_authorized = bool(user and getattr(user, 'hh_access_token', None))
+
+    await show_vacancy_message(callback.message, vacancy, index, total2, callback.from_user.id, is_authorized)
+    await callback.answer()
+
+
+# ==================== ПОЛНОЕ ОПИСАНИЕ ====================
+
+@router.callback_query(F.data.startswith("full_"))
+async def show_full_vacancy(callback: CallbackQuery, state: FSMContext):
+    vacancy_id = callback.data.replace("full_", "", 1)
+
+    await _safe_edit_text(callback.message, "📄 Загружаю полное описание...")
+
+    vacancy = await hh.get_vacancy_full(vacancy_id)
+    if not vacancy:
+        await callback.answer("❌ Не удалось загрузить вакансию", show_alert=True)
+        return
+
+    user = await db.get_user(callback.from_user.id)
+    is_authorized = bool(user and getattr(user, "hh_access_token", None))
+    is_applied = await db.was_applied(callback.from_user.id, vacancy_id)
+
+    if isinstance(vacancy, dict):
+        v = vacancy
+
+        title = v.get("name") or "Вакансия"
+        url = v.get("alternate_url") or v.get("url") or ""
+        employer = (v.get("employer") or {}).get("name") or "—"
+        area = (v.get("area") or {}).get("name") or "—"
+        experience = (v.get("experience") or {}).get("name") or "—"
+        schedule = (v.get("schedule") or {}).get("name") or "—"
+        employment = (v.get("employment") or {}).get("name") or "—"
+        salary = _format_salary_dict(v.get("salary"))
+
+        desc = _hh_html_to_text(v.get("description"))
+
+        text = (
+            f"📄 <b>{title}</b>\n\n"
+            f"🏢 <b>Компания:</b> {employer}\n"
+            f"📍 <b>Город:</b> {area}\n"
+            f"💰 <b>Зарплата:</b> {salary}\n"
+            f"💼 <b>Опыт:</b> {experience}\n"
+            f"⏰ <b>График:</b> {schedule}\n"
+            f"📋 <b>Занятость:</b> {employment}\n"
+        )
+        if url:
+            text += f"\n🔗 <a href=\"{url}\">Открыть на hh.ru</a>\n"
+        if desc:
+            text += "\n<b>Описание:</b>\n" + desc
+
+    else:
+        if hasattr(vacancy, "to_full_message"):
+            text = vacancy.to_full_message()
+        else:
+            title = getattr(vacancy, "name", None) or "Вакансия"
+            url = getattr(vacancy, "url", None) or ""
+            employer = getattr(vacancy, "employer", None) or "—"
+            city = getattr(vacancy, "city", None) or "—"
+            experience = getattr(vacancy, "experience", None) or "—"
+            schedule = getattr(vacancy, "schedule", None) or "—"
+            salary = _format_salary_obj(vacancy)
+
+            desc = getattr(vacancy, "description", None)
+            desc = _hh_html_to_text(desc) if isinstance(desc, str) else ""
+
+            requirement = getattr(vacancy, "requirement", None) or ""
+            requirement = _hh_html_to_text(requirement) if isinstance(requirement, str) else ""
+
+            text = (
+                f"📄 <b>{title}</b>\n\n"
+                f"🏢 <b>Компания:</b> {employer}\n"
+                f"📍 <b>Город:</b> {city}\n"
+                f"💰 <b>Зарплата:</b> {salary}\n"
+                f"💼 <b>Опыт:</b> {experience}\n"
+                f"⏰ <b>График:</b> {schedule}\n"
+            )
+            if url:
+                text += f"\n🔗 <a href=\"{url}\">Открыть на hh.ru</a>\n"
+            if requirement:
+                text += "\n<b>Требования:</b>\n" + requirement
+            if desc:
+                text += "\n<b>Описание:</b>\n" + desc
+
+            if not requirement and not desc and hasattr(vacancy, "to_short_message"):
+                text += "\n\n" + vacancy.to_short_message()
+
+    if len(text) > 4000:
+        text = text[:4000] + "\n\n<i>...текст обрезан. Откройте на hh.ru для полной версии</i>"
+
+    await _safe_edit_text(
+        callback.message,
+        text,
+        reply_markup=kb.vacancy_full_kb(vacancy_id, is_authorized, is_applied),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+    await callback.answer()
+
+
+# ==================== ИЗБРАННОЕ ====================
+
+async def _refresh_current_markup(callback: CallbackQuery, state: FSMContext, vacancy_id: str):
+    data = await state.get_data()
+    total = int(data.get("total") or 0)
+    current_index = int(data.get("current_index") or 0)
+
+    user = await db.get_user(callback.from_user.id)
+    is_authorized = bool(user and getattr(user, 'hh_access_token', None))
+
+    is_fav = await db.is_favorite(callback.from_user.id, vacancy_id)
+    is_applied = await db.was_applied(callback.from_user.id, vacancy_id)
+
+    try:
+        await callback.message.edit_reply_markup(
+            reply_markup=kb.vacancy_kb(
+                vacancy_id,
+                is_fav,
+                current_index,
+                total,
+                is_applied,
+                is_authorized,
+            )
+        )
+    except TelegramBadRequest:
+        pass
+
+
+@router.callback_query(F.data.startswith("fav_"))
+async def add_to_fav(callback: CallbackQuery, state: FSMContext):
+    vacancy_id = callback.data.replace("fav_", "", 1)
+
+    data = await state.get_data()
+    vacancy_data = None
+    for v in (data.get("cache_vacancies") or []):
+        if v.get("id") == vacancy_id:
+            vacancy_data = v
+            break
+
+    if vacancy_data:
+        success = await db.add_favorite(callback.from_user.id, vacancy_id, vacancy_data)
+        if success:
+            await callback.answer("⭐ Добавлено в избранное!")
+            await _refresh_current_markup(callback, state, vacancy_id)
+        else:
+            await callback.answer("⚠️ Уже в избранном")
+    else:
+        temp_data = {"id": vacancy_id}
+        success = await db.add_favorite(callback.from_user.id, vacancy_id, temp_data)
+        if success:
+            await callback.answer("⭐ Добавлено в избранное!")
+            await _refresh_current_markup(callback, state, vacancy_id)
+        else:
+            await callback.answer("⚠️ Уже в избранном")
+
+
+@router.callback_query(F.data.startswith("unfav_"))
+async def remove_from_fav(callback: CallbackQuery, state: FSMContext):
+    vacancy_id = callback.data.replace("unfav_", "", 1)
+    removed = await db.remove_favorite(callback.from_user.id, vacancy_id)
+    if removed:
+        await callback.answer("💔 Удалено из избранного")
+    else:
+        await callback.answer("⚠️ Не найдено в избранном")
+    await _refresh_current_markup(callback, state, vacancy_id)
+
+
+# ==================== ПОДПИСКА ИЗ ПОИСКА ====================
+
+@router.callback_query(F.data == "subscribe_current")
+async def subscribe_from_search(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+
+    count = await db.get_subscriptions_count(callback.from_user.id)
+    if count >= Config.MAX_SUBSCRIPTIONS:
+        await callback.answer(f"⚠️ Максимум {Config.MAX_SUBSCRIPTIONS} подписок", show_alert=True)
+        return
+
+    query = data.get("query")
+    if not query:
+        await callback.answer("⚠️ Нет активного поиска", show_alert=True)
+        return
+
+    filters = {
+        'city': data.get('city'),
+        'city_name': data.get('city_name'),
+        'experience': data.get('experience'),
+        'schedule': data.get('schedule'),
+        'salary': data.get('salary'),
+        'only_with_salary': data.get('only_with_salary', False),
+        'exclude_words': data.get('exclude_words', []),
+    }
+
+    sub_id = await db.add_subscription(
+        user_id=callback.from_user.id,
+        name=f"Подписка: {query[:50]}",
+        query=query,
+        filters=filters
+    )
+
+    if sub_id:
+        await callback.answer(f"🔔 Подписка на «{query}» создана!", show_alert=True)
+    else:
+        await callback.answer("⚠️ Ошибка создания подписки", show_alert=True)
+
+
+# ==================== ЗАКРЫТЬ / ОТМЕНА ====================
+
+@router.callback_query(F.data == "close_search")
+async def close_search(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    try:
+        await callback.message.delete()
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cancel")
+async def cancel(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text(
+        "❌ Отменено",
+        reply_markup=kb.main_menu_kb(callback.from_user.id)
+    )
+    await callback.answer()
+
+
+# ==================== FALLBACK ====================
+
+@router.callback_query(SearchStates.viewing_results)
+async def unknown_callback_in_results(callback: CallbackQuery):
+    await callback.answer("Кнопка неактуальна или не поддерживается.", show_alert=False)
+
+
+@router.message(SearchStates.viewing_results)
+async def unknown_message_in_results(message: Message, state: FSMContext):
+    await message.answer("Используйте кнопки навигации под вакансией или нажмите ❌ Закрыть.")
+
+
+# ==================== ИСТОРИЯ ПОИСКА ====================
+
+@router.message(F.text == "🕐 История поиска")
+async def show_search_history_menu(message: Message, state: FSMContext):
+    await state.clear()
+    history = await db.get_search_history(message.from_user.id, limit=10)
+
+    text = "🕐 <b>История поиска</b>\n\n"
+    text += "Выберите запрос:" if history else "История пуста."
+
+    await message.answer(
+        text,
+        reply_markup=kb.search_history_kb(history),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "history_empty")
+async def history_empty(callback: CallbackQuery):
+    await callback.answer("История пуста", show_alert=True)
+
+
+@router.callback_query(F.data == "clear_history")
+async def clear_history(callback: CallbackQuery):
+    await db.clear_search_history(callback.from_user.id)
+
+    await callback.message.edit_text(
+        "🕐 <b>История поиска</b>\n\n✅ История очищена.",
+        reply_markup=kb.search_history_kb([]),
+        parse_mode="HTML",
+    )
+    await callback.answer("🗑 Очищено")
+
+
+@router.callback_query(F.data.startswith("repeat_search_"))
+async def repeat_search_from_history(callback: CallbackQuery, state: FSMContext):
+    idx_str = callback.data.replace("repeat_search_", "", 1)
+    try:
+        idx = int(idx_str)
+    except ValueError:
+        await callback.answer("Ошибка", show_alert=True)
+        return
+
+    history = await db.get_search_history(callback.from_user.id, limit=10)
+    if idx < 0 or idx >= len(history):
+        await callback.answer("Запрос не найден", show_alert=True)
+        return
+
+    item = history[idx]
+    query = (item.get("query") or "").strip()
+    if not query:
+        await callback.answer("Пустой запрос", show_alert=True)
+        return
+
+    user = await db.get_user(callback.from_user.id)
+    filters = item.get("filters") or {}
+
+    await state.clear()
+    await state.update_data(
+        query=query,
+        city=item.get("city") or (getattr(user, 'city_id', None)),
+        city_name=item.get("city_name") or (getattr(user, 'city_name', None)),
+        experience=filters.get("experience") or (getattr(user, 'experience', None)),
+        schedule=filters.get("schedule") or (getattr(user, 'schedule', None)),
+        salary=filters.get("salary") or (getattr(user, 'salary_from', None)),
+        only_with_salary=filters.get("only_with_salary") if "only_with_salary" in filters else (getattr(user, 'only_with_salary', False)),
+        exclude_words=filters.get("exclude_words") or (getattr(user, 'exclude_words', [])),
+        current_index=0,
+        total=0,
+        per_page=Config.VACANCIES_PER_PAGE,
+        cache_page=None,
+        cache_vacancies=[],
+        city_variants={},
+    )
+    await state.set_state(None)
+
+    data = await state.get_data()
+    await callback.message.edit_text(
+        f"🔍 Запрос: <b>{query}</b>\n\n"
+        "Настройте фильтры или сразу начните поиск:",
+        reply_markup=kb.filters_kb(data),
+        parse_mode="HTML",
+    )
+    await callback.answer("✅ Загружено")
+
