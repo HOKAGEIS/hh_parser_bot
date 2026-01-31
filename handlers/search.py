@@ -1,5 +1,4 @@
-# search_router.py (полностью исправленная версия)
-
+# handlers/search.py (исправленный код)
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -13,7 +12,7 @@ from aiogram.types import Message, CallbackQuery
 import database as db
 import keyboards as kb
 from hh_api import hh, Vacancy
-from config import config
+from config import Config  # Исправлен импорт
 
 router = Router()
 
@@ -104,20 +103,20 @@ async def process_search_query(message: Message, state: FSMContext):
         await message.answer("⚠️ Запрос слишком короткий. Минимум 2 символа.")
         return
 
-    user = await db.get_user(message.from_user.id)
+    user = db.get_user(message.from_user.id)  # Убран await
 
     await state.update_data(
         query=query,
-        city=user.default_city if user else None,
-        city_name=user.default_city_name if user else None,
-        experience=user.default_experience if user else None,
-        schedule=user.default_schedule if user else None,
-        salary=user.min_salary if user else None,
-        only_with_salary=user.only_with_salary if user else False,
-        exclude_words=user.exclude_words if user else [],
+        city=getattr(user, 'default_city', None),
+        city_name=getattr(user, 'default_city_name', None),
+        experience=getattr(user, 'default_experience', None),
+        schedule=getattr(user, 'default_schedule', None),
+        salary=getattr(user, 'min_salary', None),
+        only_with_salary=getattr(user, 'only_with_salary', False),
+        exclude_words=getattr(user, 'exclude_words', []),
         current_index=0,
         total=0,
-        per_page=config.VACANCIES_PER_PAGE,
+        per_page=Config.VACANCIES_PER_PAGE,
         cache_page=None,
         cache_vacancies=[],
         city_variants={},
@@ -421,8 +420,8 @@ async def process_exclude_word(message: Message, state: FSMContext):
     data = await state.get_data()
     words = data.get("exclude_words", [])
 
-    if len(words) >= config.MAX_EXCLUDE_WORDS:
-        await message.answer(f"⚠️ Максимум {config.MAX_EXCLUDE_WORDS} слов")
+    if len(words) >= Config.MAX_EXCLUDE_WORDS:
+        await message.answer(f"⚠️ Максимум {Config.MAX_EXCLUDE_WORDS} слов")
         return
 
     if word not in words:
@@ -590,7 +589,7 @@ async def execute_search(callback: CallbackQuery, state: FSMContext):
 
     await _safe_edit_text(callback.message, "🔍 Ищу вакансии...")
 
-    per_page = int(data.get("per_page") or config.VACANCIES_PER_PAGE)
+    per_page = int(data.get("per_page") or Config.VACANCIES_PER_PAGE)
 
     vacancies, total = await hh.search_vacancies(
         text=data.get("query"),
@@ -627,8 +626,8 @@ async def execute_search(callback: CallbackQuery, state: FSMContext):
     )
     await state.set_state(SearchStates.viewing_results)
 
-    user = await db.get_user(callback.from_user.id)
-    is_authorized = bool(user and user.hh_access_token)
+    user = db.get_user(callback.from_user.id)  # Убран await
+    is_authorized = bool(user and getattr(user, 'hh_access_token', None))
 
     first = _vacancy_from_short_dict(cache_vacancies[0])
     await show_vacancy_message(
@@ -680,8 +679,8 @@ async def change_page(callback: CallbackQuery, state: FSMContext):
 
     await state.update_data(current_index=index, total=total2)
 
-    user = await db.get_user(callback.from_user.id)
-    is_authorized = bool(user and user.hh_access_token)
+    user = db.get_user(callback.from_user.id)  # Убран await
+    is_authorized = bool(user and getattr(user, 'hh_access_token', None))
 
     await show_vacancy_message(callback.message, vacancy, index, total2, callback.from_user.id, is_authorized)
     await callback.answer()
@@ -700,7 +699,7 @@ async def show_full_vacancy(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ Не удалось загрузить вакансию", show_alert=True)
         return
 
-    user = await db.get_user(callback.from_user.id)
+    user = db.get_user(callback.from_user.id)  # Убран await
     is_authorized = bool(user and getattr(user, "hh_access_token", None))
     is_applied = await db.was_applied(callback.from_user.id, vacancy_id)
 
@@ -791,8 +790,8 @@ async def _refresh_current_markup(callback: CallbackQuery, state: FSMContext, va
     total = int(data.get("total") or 0)
     current_index = int(data.get("current_index") or 0)
 
-    user = await db.get_user(callback.from_user.id)
-    is_authorized = bool(user and user.hh_access_token)
+    user = db.get_user(callback.from_user.id)  # Убран await
+    is_authorized = bool(user and getattr(user, 'hh_access_token', None))
 
     is_fav = await db.is_favorite(callback.from_user.id, vacancy_id)
     is_applied = await db.was_applied(callback.from_user.id, vacancy_id)
@@ -850,8 +849,8 @@ async def subscribe_from_search(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
 
     count = await db.get_subscriptions_count(callback.from_user.id)
-    if count >= config.MAX_SUBSCRIPTIONS:
-        await callback.answer(f"⚠️ Максимум {config.MAX_SUBSCRIPTIONS} подписок", show_alert=True)
+    if count >= Config.MAX_SUBSCRIPTIONS:
+        await callback.answer(f"⚠️ Максимум {Config.MAX_SUBSCRIPTIONS} подписок", show_alert=True)
         return
 
     query = data.get("query")
@@ -957,22 +956,22 @@ async def repeat_search_from_history(callback: CallbackQuery, state: FSMContext)
         await callback.answer("Пустой запрос", show_alert=True)
         return
 
-    user = await db.get_user(callback.from_user.id)
+    user = db.get_user(callback.from_user.id)  # Убран await
     filters = item.get("filters") or {}
 
     await state.clear()
     await state.update_data(
         query=query,
-        city=item.get("city") or (user.default_city if user else None),
-        city_name=item.get("city_name") or (user.default_city_name if user else None),
-        experience=filters.get("experience") or (user.default_experience if user else None),
-        schedule=filters.get("schedule") or (user.default_schedule if user else None),
-        salary=filters.get("salary") or (user.min_salary if user else None),
-        only_with_salary=filters.get("only_with_salary") if "only_with_salary" in filters else (user.only_with_salary if user else False),
-        exclude_words=filters.get("exclude_words") or (user.exclude_words if user else []),
+        city=item.get("city") or (getattr(user, 'default_city', None)),
+        city_name=item.get("city_name") or (getattr(user, 'default_city_name', None)),
+        experience=filters.get("experience") or (getattr(user, 'default_experience', None)),
+        schedule=filters.get("schedule") or (getattr(user, 'default_schedule', None)),
+        salary=filters.get("salary") or (getattr(user, 'min_salary', None)),
+        only_with_salary=filters.get("only_with_salary") if "only_with_salary" in filters else (getattr(user, 'only_with_salary', False)),
+        exclude_words=filters.get("exclude_words") or (getattr(user, 'exclude_words', [])),
         current_index=0,
         total=0,
-        per_page=config.VACANCIES_PER_PAGE,
+        per_page=Config.VACANCIES_PER_PAGE,
         cache_page=None,
         cache_vacancies=[],
         city_variants={},
@@ -987,9 +986,3 @@ async def repeat_search_from_history(callback: CallbackQuery, state: FSMContext)
         parse_mode="HTML",
     )
     await callback.answer("✅ Загружено")
-
-
-
-
-
-
