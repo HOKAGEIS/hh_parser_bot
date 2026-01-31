@@ -134,6 +134,37 @@ async def init_db():
         
         await db.commit()
 
+async def init_db():
+    """Инициализация базы данных"""
+    async with aiosqlite.connect(DATABASE) as db:
+        # ... существующие таблицы ...
+        
+        # Тикеты поддержки
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS tickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                username TEXT,
+                status TEXT DEFAULT 'open',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
+        
+        # Сообщения в тикетах
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS ticket_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket_id INTEGER NOT NULL,
+                sender_type TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (ticket_id) REFERENCES tickets(id)
+            )
+        """)
+        
+        await db.commit()
+
 
 # ==================== ПОЛЬЗОВАТЕЛИ ====================
 
@@ -471,3 +502,79 @@ async def was_applied(user_id: int, vacancy_id: str) -> bool:
             (user_id, vacancy_id)
         )
         return await cursor.fetchone() is not None
+
+# ==================== ТИКЕТЫ ПОДДЕРЖКИ ====================
+
+async def create_ticket(user_id: int, username: str = None) -> int:
+    """Создать новый тикет"""
+    async with aiosqlite.connect(DATABASE) as db:
+        cursor = await db.execute(
+            "INSERT INTO tickets (user_id, username) VALUES (?, ?)",
+            (user_id, username)
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_open_ticket(user_id: int) -> Optional[dict]:
+    """Получить открытый тикет пользователя"""
+    async with aiosqlite.connect(DATABASE) as db:
+        cursor = await db.execute(
+            "SELECT id, user_id, username, status, created_at FROM tickets WHERE user_id = ? AND status = 'open'",
+            (user_id,)
+        )
+        row = await cursor.fetchone()
+        if row:
+            return {"id": row[0], "user_id": row[1], "username": row[2], "status": row[3], "created_at": row[4]}
+    return None
+
+
+async def get_ticket_by_id(ticket_id: int) -> Optional[dict]:
+    """Получить тикет по ID"""
+    async with aiosqlite.connect(DATABASE) as db:
+        cursor = await db.execute(
+            "SELECT id, user_id, username, status, created_at FROM tickets WHERE id = ?",
+            (ticket_id,)
+        )
+        row = await cursor.fetchone()
+        if row:
+            return {"id": row[0], "user_id": row[1], "username": row[2], "status": row[3], "created_at": row[4]}
+    return None
+
+
+async def get_all_open_tickets() -> List[dict]:
+    """Получить все открытые тикеты"""
+    async with aiosqlite.connect(DATABASE) as db:
+        cursor = await db.execute(
+            "SELECT id, user_id, username, status, created_at FROM tickets WHERE status = 'open' ORDER BY created_at DESC"
+        )
+        rows = await cursor.fetchall()
+        return [{"id": r[0], "user_id": r[1], "username": r[2], "status": r[3], "created_at": r[4]} for r in rows]
+
+
+async def close_ticket(ticket_id: int):
+    """Закрыть тикет"""
+    async with aiosqlite.connect(DATABASE) as db:
+        await db.execute("UPDATE tickets SET status = 'closed' WHERE id = ?", (ticket_id,))
+        await db.commit()
+
+
+async def add_ticket_message(ticket_id: int, sender_type: str, message: str):
+    """Добавить сообщение в тикет (sender_type: 'user' или 'admin')"""
+    async with aiosqlite.connect(DATABASE) as db:
+        await db.execute(
+            "INSERT INTO ticket_messages (ticket_id, sender_type, message) VALUES (?, ?, ?)",
+            (ticket_id, sender_type, message)
+        )
+        await db.commit()
+
+
+async def get_ticket_messages(ticket_id: int) -> List[dict]:
+    """Получить сообщения тикета"""
+    async with aiosqlite.connect(DATABASE) as db:
+        cursor = await db.execute(
+            "SELECT id, sender_type, message, created_at FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at",
+            (ticket_id,)
+        )
+        rows = await cursor.fetchall()
+        return [{"id": r[0], "sender_type": r[1], "message": r[2], "created_at": r[3]} for r in rows]
