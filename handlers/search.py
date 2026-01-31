@@ -45,6 +45,52 @@ def _vacancy_to_short_dict(v: Vacancy) -> Dict[str, Any]:
         "schedule": v.schedule,
         "requirement": v.requirement,
     }
+    
+    def _hh_html_to_text(s: str | None) -> str:
+    if not s:
+        return ""
+    s = re.sub(r"(?i)<br\s*/?>", "\n", s)
+    s = re.sub(r"(?i)</p\s*>", "\n\n", s)
+    s = re.sub(r"(?i)</li\s*>", "\n", s)
+    s = re.sub(r"(?i)<li\s*>", "• ", s)
+    s = re.sub(r"<[^>]+>", "", s)
+    s = html.unescape(s)
+    s = re.sub(r"\n{3,}", "\n\n", s).strip()
+    return s
+
+
+def _format_salary_dict(sal: dict | None) -> str:
+    if not sal:
+        return "не указана"
+    frm = sal.get("from")
+    to = sal.get("to")
+    cur = sal.get("currency") or "RUR"
+    cur_map = {"RUR": "₽", "RUB": "₽", "USD": "$", "EUR": "€", "KZT": "₸"}
+    cur_sym = cur_map.get(cur, cur)
+
+    if frm and to:
+        return f"{frm:,}–{to:,} {cur_sym}".replace(",", " ")
+    if frm:
+        return f"от {frm:,} {cur_sym}".replace(",", " ")
+    if to:
+        return f"до {to:,} {cur_sym}".replace(",", " ")
+    return f"{cur_sym}"
+
+
+def _format_salary_obj(v) -> str:
+    frm = getattr(v, "salary_from", None)
+    to = getattr(v, "salary_to", None)
+    cur = getattr(v, "salary_currency", None) or "RUR"
+    cur_map = {"RUR": "₽", "RUB": "₽", "USD": "$", "EUR": "€", "KZT": "₸"}
+    cur_sym = cur_map.get(cur, cur)
+
+    if frm and to:
+        return f"{frm:,}–{to:,} {cur_sym}".replace(",", " ")
+    if frm:
+        return f"от {frm:,} {cur_sym}".replace(",", " ")
+    if to:
+        return f"до {to:,} {cur_sym}".replace(",", " ")
+    return "не указана"
 
 
 def _vacancy_from_short_dict(v: Dict[str, Any]) -> Vacancy:
@@ -790,11 +836,8 @@ async def show_full_vacancy(callback: CallbackQuery, state: FSMContext):
     is_authorized = bool(user and getattr(user, "hh_access_token", None))
     is_applied = await db.was_applied(callback.from_user.id, vacancy_id)
 
-    # 1) Нормальный случай: это Vacancy
-    if hasattr(vacancy, "to_full_message"):
-        text = vacancy.to_full_message()
-    else:
-        # 2) Частый случай у тебя сейчас: это dict (JSON от HH)
+    # 1) Если вернулся dict (сырой JSON HH)
+    if isinstance(vacancy, dict):
         v = vacancy
 
         title = v.get("name") or "Вакансия"
@@ -804,10 +847,9 @@ async def show_full_vacancy(callback: CallbackQuery, state: FSMContext):
         experience = (v.get("experience") or {}).get("name") or "—"
         schedule = (v.get("schedule") or {}).get("name") or "—"
         employment = (v.get("employment") or {}).get("name") or "—"
-        salary = _format_salary_from_hh(v.get("salary"))
+        salary = _format_salary_dict(v.get("salary"))
 
-        desc_raw = v.get("description") or ""
-        desc = _hh_html_to_text(desc_raw)
+        desc = _hh_html_to_text(v.get("description"))
 
         text = (
             f"📄 <b>{title}</b>\n\n"
@@ -818,12 +860,50 @@ async def show_full_vacancy(callback: CallbackQuery, state: FSMContext):
             f"⏰ <b>График:</b> {schedule}\n"
             f"📋 <b>Занятость:</b> {employment}\n"
         )
-
         if url:
             text += f"\n🔗 <a href=\"{url}\">Открыть на hh.ru</a>\n"
-
         if desc:
             text += "\n<b>Описание:</b>\n" + desc
+
+    # 2) Если вернулся объект Vacancy (или другой объект)
+    else:
+        # если в твоём Vacancy всё-таки есть to_full_message — используем
+        if hasattr(vacancy, "to_full_message"):
+            text = vacancy.to_full_message()
+        else:
+            # иначе — соберём “полное” как можем
+            title = getattr(vacancy, "name", None) or "Вакансия"
+            url = getattr(vacancy, "url", None) or ""
+            employer = getattr(vacancy, "employer", None) or "—"
+            city = getattr(vacancy, "city", None) or "—"
+            experience = getattr(vacancy, "experience", None) or "—"
+            schedule = getattr(vacancy, "schedule", None) or "—"
+            salary = _format_salary_obj(vacancy)
+
+            desc = getattr(vacancy, "description", None)
+            desc = _hh_html_to_text(desc) if isinstance(desc, str) else ""
+
+            requirement = getattr(vacancy, "requirement", None) or ""
+            requirement = _hh_html_to_text(requirement) if isinstance(requirement, str) else ""
+
+            text = (
+                f"📄 <b>{title}</b>\n\n"
+                f"🏢 <b>Компания:</b> {employer}\n"
+                f"📍 <b>Город:</b> {city}\n"
+                f"💰 <b>Зарплата:</b> {salary}\n"
+                f"💼 <b>Опыт:</b> {experience}\n"
+                f"⏰ <b>График:</b> {schedule}\n"
+            )
+            if url:
+                text += f"\n🔗 <a href=\"{url}\">Открыть на hh.ru</a>\n"
+            if requirement:
+                text += "\n<b>Требования:</b>\n" + requirement
+            if desc:
+                text += "\n<b>Описание:</b>\n" + desc
+
+            # если есть to_short_message — добавим как запасной вариант, чтобы не было пусто
+            if not requirement and not desc and hasattr(vacancy, "to_short_message"):
+                text += "\n\n" + vacancy.to_short_message()
 
     if len(text) > 4000:
         text = text[:4000] + "\n\n<i>...текст обрезан. Откройте на hh.ru для полной версии</i>"
@@ -836,7 +916,6 @@ async def show_full_vacancy(callback: CallbackQuery, state: FSMContext):
         disable_web_page_preview=True,
     )
     await callback.answer()
-
 # ==================== ИЗБРАННОЕ ====================
 
 async def _refresh_current_markup(callback: CallbackQuery, state: FSMContext, vacancy_id: str):
@@ -1040,6 +1119,7 @@ async def repeat_search_from_history(callback: CallbackQuery, state: FSMContext)
         parse_mode="HTML",
     )
     await callback.answer("✅ Загружено")
+
 
 
 
