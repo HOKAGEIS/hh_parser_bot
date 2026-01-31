@@ -40,12 +40,13 @@ async def cmd_start(message: Message):
         f"👋 Привет, <b>{message.from_user.first_name}</b>!\n\n"
         "Я бот для поиска вакансий на <b>hh.ru</b> 🔍\n\n"
         "<b>Что я умею:</b>\n"
-        "• 🔍 Искать вакансии\n"
+        "• 🔍 Искать вакансии с фильтрами\n"
         "• 📍 Поиск по городу\n"
         "• 💰 Фильтр по зарплате\n"
         "• 🚫 Исключать ненужные\n"
         "• ⭐ Избранное\n"
-        "• 🔔 Подписки\n"
+        "• 🔔 Подписки с уведомлениями\n"
+        "• 🕐 История поиска\n"
         "• 📊 Аналитика\n\n"
         "Выберите действие 👇",
         reply_markup=kb.main_menu_kb(message.from_user.id)
@@ -56,25 +57,24 @@ async def cmd_start(message: Message):
 async def cmd_help(message: Message):
     await message.answer(
         "📚 <b>Справка</b>\n\n"
-        "🔍 Поиск — искать вакансии\n"
-        "⭐ Избранное — сохранённые\n"
-        "🔔 Подписки — уведомления\n"
-        "📊 Аналитика — зарплаты\n"
-        "⚙️ Настройки — параметры\n"
-        "💬 Поддержка — помощь",
-        reply_markup=kb.main_menu_kb()
+        "🔍 <b>Поиск</b> — искать вакансии\n"
+        "⭐ <b>Избранное</b> — сохранённые\n"
+        "🔔 <b>Подписки</b> — автоуведомления\n"
+        "🕐 <b>История</b> — прошлые запросы\n"
+        "📊 <b>Аналитика</b> — зарплаты\n"
+        "⚙️ <b>Настройки</b> — параметры\n"
+        "💬 <b>Поддержка</b> — помощь",
+        reply_markup=kb.main_menu_kb(message.from_user.id)
     )
 
 
 async def main():
-    # ВАЖНО: Инициализация БД в самом начале!
+    # Инициализация БД
     try:
         await db.init_db()
         logger.info("✅ База данных инициализирована")
     except Exception as e:
         logger.error(f"❌ Ошибка БД: {e}")
-        import traceback
-        traceback.print_exc()
         return
     
     # Проверяем бота
@@ -105,6 +105,14 @@ async def main():
         traceback.print_exc()
         return
     
+    # Запускаем планировщик уведомлений
+    try:
+        from utils.scheduler import start_scheduler
+        await start_scheduler(bot)
+        logger.info("✅ Планировщик уведомлений запущен")
+    except Exception as e:
+        logger.warning(f"⚠️ Планировщик не запущен: {e}")
+    
     logger.info("🚀 Бот запущен!")
     
     await dp.start_polling(bot, drop_pending_updates=True)
@@ -115,4 +123,3 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("👋 Бот остановлен")
-
