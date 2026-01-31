@@ -71,7 +71,7 @@ async def cmd_help(message: Message):
 async def main():
     # Инициализация БД
     try:
-        await db.init_db()
+        db.init_db()  # Убран await
         logger.info("✅ База данных инициализирована")
     except Exception as e:
         logger.error(f"❌ Ошибка БД: {e}")
