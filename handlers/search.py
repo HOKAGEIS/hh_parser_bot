@@ -2,6 +2,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import Message, CallbackQuery
 
 import database as db
 import keyboards as kb
@@ -1074,3 +1075,4 @@ async def cancel_location(message: Message, state: FSMContext):
             "❌ Отменено",
             reply_markup=kb.main_menu_kb(message.from_user.id)
         )
+
