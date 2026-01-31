@@ -1,7 +1,7 @@
 import aiohttp
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
-from config import config
+from config import Config  # Импортируем класс напрямую
 import re
 
 
@@ -79,7 +79,7 @@ class HHApi:
     """Класс для работы с API HeadHunter"""
     
     def __init__(self):
-        self.base_url = config.HH_API_BASE_URL
+        self.base_url = Config.HH_API_BASE_URL  # Используем класс Config напрямую
         self.session = None
         self.headers = {
             'User-Agent': 'HH-Bot/1.0',
