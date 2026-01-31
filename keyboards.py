@@ -10,7 +10,7 @@ from typing import List
 
 # ==================== ГЛАВНОЕ МЕНЮ ====================
 
-def main_menu_kb() -> ReplyKeyboardMarkup:
+def main_menu_kb(user_id: int = None) -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     builder.row(
         KeyboardButton(text="🔍 Поиск вакансий"),
@@ -21,15 +21,17 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
         KeyboardButton(text="📊 Аналитика")
     )
     builder.row(
-        KeyboardButton(text="📨 Мои отклики"),
-        KeyboardButton(text="✉️ Письма")
-    )
-    builder.row(
         KeyboardButton(text="⚙️ Настройки"),
         KeyboardButton(text="💬 Поддержка")
     )
+    
+    # Кнопка админки только для админа
+    if user_id and user_id in config.ADMIN_IDS:
+        builder.row(
+            KeyboardButton(text="👑 Админ-панель")
+        )
+    
     return builder.as_markup(resize_keyboard=True)
-
 
 # ==================== ФИЛЬТРЫ ====================
 
@@ -923,5 +925,6 @@ def admin_back_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back")
     )
     return builder.as_markup()
+
 
 
