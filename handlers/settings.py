@@ -1,13 +1,15 @@
+# handlers/settings.py (исправленный код)
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import InlineKeyboardButton
 
 import database as db
 import keyboards as kb
 from hh_api import hh
-from config import config
+from config import Config
 
 router = Router()
 
@@ -34,7 +36,7 @@ def settings_cities_kb() -> InlineKeyboardBuilder:
     )
 
     # популярные города
-    for city_id, city_name in list(config.POPULAR_CITIES.items())[:10]:
+    for city_id, city_name in list(Config.POPULAR_CITIES.items())[:10]:
         builder.row(
             InlineKeyboardButton(text=f"📍 {city_name}", callback_data=f"settings_set_city_{city_id}")
         )
@@ -140,7 +142,7 @@ async def settings_city_manual_text(message: Message, state: FSMContext):
         c = cities[0]
         cid = str(c.get("id"))
         name = c.get("text") or c.get("name") or city_name
-        await db.update_user_settings(message.from_user.id, city=cid, city_name=name)
+        await db.update_user_settings(message.from_user.id, city_id=cid, city_name=name)
         await state.clear()
 
         user = await db.get_user(message.from_user.id)
@@ -172,7 +174,7 @@ async def settings_city_manual_not_text(message: Message):
 
 @router.callback_query(F.data == "settings_set_city_any")
 async def settings_set_city_any(callback: CallbackQuery, state: FSMContext):
-    await db.update_user_settings(callback.from_user.id, city=None, city_name=None)
+    await db.update_user_settings(callback.from_user.id, city_id=None, city_name=None)
     await state.clear()
 
     user = await db.get_user(callback.from_user.id)
@@ -194,13 +196,13 @@ async def settings_set_city(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     name = (data.get("city_variants") or {}).get(city_id)  # может быть None
 
-    await db.update_user_settings(callback.from_user.id, city=city_id, city_name=name)
+    await db.update_user_settings(callback.from_user.id, city_id=city_id, city_name=name)
     await state.clear()
 
     user = await db.get_user(callback.from_user.id)
     try:
         await callback.message.edit_text(
-            f"✅ Город по умолчанию: <b>{user.default_city_name or 'выбран'}</b>",
+            f"✅ Город по умолчанию: <b>{user.get('city_name', 'не выбран') if user else 'не выбран'}</b>",
             reply_markup=kb.settings_kb(user),
             parse_mode="HTML",
         )
@@ -214,7 +216,8 @@ async def settings_set_city(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "settings_salary_toggle")
 async def settings_salary_toggle(callback: CallbackQuery):
     user = await db.get_user(callback.from_user.id)
-    new_value = not (user.only_with_salary if user else False)
+    current_setting = user.get('only_with_salary', False) if user else False
+    new_value = not current_setting
 
     await db.update_user_settings(callback.from_user.id, only_with_salary=new_value)
     user = await db.get_user(callback.from_user.id)
@@ -238,7 +241,7 @@ async def settings_exclude(callback: CallbackQuery, state: FSMContext):
     await state.set_state(None)
 
     user = await db.get_user(callback.from_user.id)
-    words = user.exclude_words if user else []
+    words = user.get('exclude_words', []) if user else []
 
     text = "🚫 <b>Слова-исключения</b>\n\n"
     text += (", ".join([f"<code>{w}</code>" for w in words]) if words else "Список пуст.")
@@ -282,16 +285,15 @@ async def process_exclude_word(message: Message, state: FSMContext):
         return
 
     user = await db.get_user(message.from_user.id)
-    words = user.exclude_words if user else []
+    words = user.get('exclude_words', []) if user else []
 
-    max_words = getattr(config, "MAX_EXCLUDE_WORDS", 20)
+    max_words = getattr(Config, "MAX_EXCLUDE_WORDS", 20)
     if len(words) >= max_words:
         await message.answer(f"⚠️ Максимум {max_words} слов")
         return
 
     if word not in words:
         words.append(word)
-        # лучше через set_user_exclude_words, но update_user_settings тоже ок
         await db.update_user_settings(message.from_user.id, exclude_words=words)
 
     await state.clear()
@@ -319,7 +321,7 @@ async def settings_remove_exclude(callback: CallbackQuery):
         return
 
     user = await db.get_user(callback.from_user.id)
-    words = user.exclude_words if user else []
+    words = user.get('exclude_words', []) if user else []
 
     if not (0 <= idx < len(words)):
         await callback.answer("Уже удалено", show_alert=False)
@@ -361,7 +363,7 @@ async def settings_clear_exclude(callback: CallbackQuery):
 @router.callback_query(F.data == "settings_notifications")
 async def settings_notifications(callback: CallbackQuery):
     user = await db.get_user(callback.from_user.id)
-    enabled = user.notifications_enabled if user else True
+    enabled = user.get('notifications_enabled', True) if user else True
 
     await callback.message.edit_text(
         "🔔 <b>Автоуведомления</b>\n\n"
@@ -376,7 +378,8 @@ async def settings_notifications(callback: CallbackQuery):
 @router.callback_query(F.data == "toggle_notifications")
 async def toggle_notifications(callback: CallbackQuery):
     user = await db.get_user(callback.from_user.id)
-    new_value = not (user.notifications_enabled if user else True)
+    current_setting = user.get('notifications_enabled', True) if user else True
+    new_value = not current_setting
 
     await db.update_user_settings(callback.from_user.id, notifications_enabled=new_value)
 
@@ -397,11 +400,11 @@ async def settings_reset(callback: CallbackQuery, state: FSMContext):
 
     await db.update_user_settings(
         callback.from_user.id,
-        city=None,
+        city_id=None,
         city_name=None,
         experience=None,
         schedule=None,
-        min_salary=None,
+        salary_from=None,
         only_with_salary=False,
         exclude_words=[],
         notifications_enabled=True,
