@@ -77,8 +77,12 @@ class Vacancy:
 
 class HHApi:
     def __init__(self):
-        self.base_url = config.HH_API_URL
-        self.headers = {"User-Agent": config.HH_USER_AGENT}
+        # hh_api.py (строка ~80)
+# Было:
+self.base_url = config.HH_API_URL
+
+# Должно быть:
+self.base_url = config.HH_API_BASE_URL
     
     async def _request(self, endpoint: str, params: dict = None) -> dict:
         async with aiohttp.ClientSession() as session:
@@ -320,3 +324,4 @@ class HHApi:
 
 
 hh = HHApi()
+
