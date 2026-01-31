@@ -13,3 +13,6 @@ class Config:
     def validate(cls):
         if not cls.TELEGRAM_BOT_TOKEN:
             raise ValueError("TELEGRAM_BOT_TOKEN must be set in environment variables")
+        
+        if len(cls.TELEGRAM_BOT_TOKEN) < 40:
+            raise ValueError("Invalid TELEGRAM_BOT_TOKEN format")
