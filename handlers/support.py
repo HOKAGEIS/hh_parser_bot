@@ -79,7 +79,7 @@ async def process_support_message(message: Message, state: FSMContext, bot: Bot)
     
     await message.answer(
         f"✅ <b>Обращение #{ticket_id}</b>\n\nМы получили ваше сообщение!",
-        reply_markup=kb.main_menu_kb(),
+        reply_markup=kb.main_menu_kb(message.from_user.id),
         parse_mode="HTML"
     )
     
