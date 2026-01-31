@@ -183,7 +183,7 @@ async def process_broadcast(message: Message, state: FSMContext, bot: Bot):
     conn = sqlite3.connect(db.Config.DATABASE_PATH)  # Заменено db.DATABASE на db.Config.DATABASE_PATH
     cursor = conn.cursor()
     
-    cursor.execute("SELECT id FROM users")
+    cursor.execute("SELECT user_id FROM users")  # Исправлено: id -> user_id
     users = cursor.fetchall()
     
     conn.close()
