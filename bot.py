@@ -6,7 +6,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 
-from config import Config
+from Сonfig import Config
 import database as db
 import keyboards as kb
 
@@ -127,3 +127,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("👋 Бот остановлен")
+
