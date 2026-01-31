@@ -40,13 +40,13 @@ async def cmd_start(message: Message):
         f"👋 Привет, <b>{message.from_user.first_name}</b>!\n\n"
         "Я бот для поиска вакансий на <b>hh.ru</b> 🔍\n\n"
         "<b>Что я умею:</b>\n"
-        "• 🔍 Искать вакансии с фильтрами\n"
+        "• 🔍 Искать вакансии\n"
         "• 📍 Поиск по городу\n"
         "• 💰 Фильтр по зарплате\n"
         "• 🚫 Исключать ненужные\n"
         "• ⭐ Избранное\n"
         "• 🔔 Подписки\n"
-        "• 📊 Аналитика зарплат\n\n"
+        "• 📊 Аналитика\n\n"
         "Выберите действие 👇",
         reply_markup=kb.main_menu_kb()
     )
@@ -56,23 +56,25 @@ async def cmd_start(message: Message):
 async def cmd_help(message: Message):
     await message.answer(
         "📚 <b>Справка</b>\n\n"
-        "🔍 <b>Поиск</b> — поиск вакансий\n"
-        "⭐ <b>Избранное</b> — сохранённые\n"
-        "🔔 <b>Подписки</b> — уведомления\n"
-        "📊 <b>Аналитика</b> — зарплаты\n"
-        "⚙️ <b>Настройки</b> — параметры\n"
-        "💬 <b>Поддержка</b> — помощь",
+        "🔍 Поиск — искать вакансии\n"
+        "⭐ Избранное — сохранённые\n"
+        "🔔 Подписки — уведомления\n"
+        "📊 Аналитика — зарплаты\n"
+        "⚙️ Настройки — параметры\n"
+        "💬 Поддержка — помощь",
         reply_markup=kb.main_menu_kb()
     )
 
 
 async def main():
-    # Инициализация БД
+    # ВАЖНО: Инициализация БД в самом начале!
     try:
         await db.init_db()
         logger.info("✅ База данных инициализирована")
     except Exception as e:
         logger.error(f"❌ Ошибка БД: {e}")
+        import traceback
+        traceback.print_exc()
         return
     
     # Проверяем бота
@@ -87,13 +89,14 @@ async def main():
     
     # Подключаем роутеры
     try:
-        from handlers import search, favorites, subscriptions, settings, admin
+        from handlers import search, favorites, subscriptions, settings, admin, support
         
         dp.include_router(search.router)
         dp.include_router(favorites.router)
         dp.include_router(subscriptions.router)
         dp.include_router(settings.router)
         dp.include_router(admin.router)
+        dp.include_router(support.router)
         
         logger.info("✅ Роутеры подключены")
     except Exception as e:
