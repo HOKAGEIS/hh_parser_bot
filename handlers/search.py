@@ -960,3 +960,117 @@ async def cancel(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.edit_text("❌ Отменено")
     await callback.answer()
+from aiogram.types import Message, CallbackQuery, ContentType
+
+# ==================== ГЕОЛОКАЦИЯ ====================
+
+@router.callback_query(F.data == "request_location")
+async def request_location(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(SearchStates.entering_city)
+    
+    await callback.message.answer(
+        "📍 <b>Определение города</b>\n\n"
+        "Нажмите кнопку ниже, чтобы отправить ваше местоположение.\n\n"
+        "<i>Или напишите название города вручную.</i>",
+        reply_markup=kb.location_request_kb(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.message(F.location)
+async def process_location(message: Message, state: FSMContext):
+    """Обработка полученной геолокации"""
+    lat = message.location.latitude
+    lon = message.location.longitude
+    
+    await message.answer("🔍 Определяю город...", reply_markup=kb.main_menu_kb(message.from_user.id))
+    
+    # Ищем город по координатам через API
+    city = await find_city_by_coordinates(lat, lon)
+    
+    if city:
+        await state.update_data(city=city.get("id"), city_name=city.get("name"))
+        await state.set_state(None)
+        
+        data = await state.get_data()
+        query = data.get("query")
+        
+        if query:
+            await message.answer(
+                f"✅ Определён город: <b>{city.get('name')}</b>\n\n"
+                f"🔍 Запрос: <b>{query}</b>",
+                reply_markup=kb.filters_kb(data),
+                parse_mode="HTML"
+            )
+        else:
+            await message.answer(
+                f"✅ Город установлен: <b>{city.get('name')}</b>\n\n"
+                "Теперь начните поиск вакансий!",
+                reply_markup=kb.main_menu_kb(message.from_user.id),
+                parse_mode="HTML"
+            )
+    else:
+        await message.answer(
+            "😔 Не удалось определить город.\n"
+            "Попробуйте ввести название вручную.",
+            reply_markup=kb.main_menu_kb(message.from_user.id)
+        )
+        await state.set_state(None)
+
+
+async def find_city_by_coordinates(lat: float, lon: float) -> dict:
+    """Найти город по координатам через Nominatim API"""
+    import aiohttp
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Используем бесплатный Nominatim API
+            url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&accept-language=ru"
+            headers = {"User-Agent": "HH-Parser-Bot/1.0"}
+            
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    address = data.get("address", {})
+                    
+                    # Ищем город в ответе
+                    city_name = (
+                        address.get("city") or 
+                        address.get("town") or 
+                        address.get("village") or 
+                        address.get("state")
+                    )
+                    
+                    if city_name:
+                        # Ищем город в HH.ru
+                        cities = await hh.search_area(city_name)
+                        if cities:
+                            return {
+                                "id": cities[0].get("id"),
+                                "name": cities[0].get("text", city_name)
+                            }
+    except Exception as e:
+        print(f"Ошибка определения города: {e}")
+    
+    return None
+
+
+@router.message(F.text == "❌ Отмена")
+async def cancel_location(message: Message, state: FSMContext):
+    await state.set_state(None)
+    
+    data = await state.get_data()
+    query = data.get("query")
+    
+    if query:
+        await message.answer(
+            f"🔍 Запрос: <b>{query}</b>",
+            reply_markup=kb.filters_kb(data),
+            parse_mode="HTML"
+        )
+    else:
+        await message.answer(
+            "❌ Отменено",
+            reply_markup=kb.main_menu_kb(message.from_user.id)
+        )
