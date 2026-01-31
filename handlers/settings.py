@@ -39,7 +39,7 @@ async def show_applications(message: Message):
         "🚧 <i>Функция в разработке</i>\n\n"
         "Для откликов требуется интеграция с API HH.ru.\n"
         "Следите за обновлениями!",
-        reply_markup=kb.main_menu_kb(),
+        reply_markup=kb.main_menu_kb(message.from_user.id),
         parse_mode="HTML"
     )
 
@@ -53,7 +53,7 @@ async def show_letters(message: Message):
         "🚧 <i>Функция в разработке</i>\n\n"
         "Скоро вы сможете создавать шаблоны писем.\n"
         "Следите за обновлениями!",
-        reply_markup=kb.main_menu_kb(),
+        reply_markup=kb.main_menu_kb(message.from_user.id),
         parse_mode="HTML"
     )
 
@@ -266,7 +266,7 @@ async def process_analytics_query(message: Message, state: FSMContext):
     if stats.get("count", 0) == 0:
         await message.answer(
             f"😔 По запросу «{query}» вакансий с зарплатой не найдено.",
-            reply_markup=kb.main_menu_kb()
+            reply_markup=kb.main_menu_kb(message.from_user.id)
         )
         return
     
@@ -282,4 +282,5 @@ async def process_analytics_query(message: Message, state: FSMContext):
     ).replace(",", " ")
     
     await message.answer(text, reply_markup=kb.main_menu_kb(), parse_mode="HTML")
+
 
