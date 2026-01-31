@@ -3,6 +3,8 @@ import json
 from datetime import datetime
 from typing import List, Tuple, Optional
 import os
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from config import Config
 
 def init_db():
@@ -78,18 +80,38 @@ def init_db():
     conn.commit()
     conn.close()
 
-def add_user(user_id: int):
-    """Добавление пользователя в базу данных"""
+def _execute_query(query: str, params: tuple = (), fetch: str = None):
+    """Выполнение SQL-запроса в отдельном потоке"""
     conn = sqlite3.connect(Config.DATABASE_PATH)
     cursor = conn.cursor()
     
     try:
-        cursor.execute('INSERT OR IGNORE INTO users (id) VALUES (?)', (user_id,))
+        cursor.execute(query, params)
+        if fetch == 'one':
+            result = cursor.fetchone()
+        elif fetch == 'all':
+            result = cursor.fetchall()
+        else:
+            result = None
         conn.commit()
+        return result
     except sqlite3.Error as e:
         print(f"Database error: {e}")
+        return None
     finally:
         conn.close()
+
+async def _execute_query_async(query: str, params: tuple = (), fetch: str = None):
+    """Асинхронное выполнение SQL-запроса"""
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor() as executor:
+        result = await loop.run_in_executor(executor, _execute_query, query, params, fetch)
+    return result
+
+async def add_user_async(user_id: int):
+    """Добавление пользователя в базу данных асинхронно"""
+    query = 'INSERT OR IGNORE INTO users (id) VALUES (?)'
+    await _execute_query_async(query, (user_id,))
 
 def save_vacancy(vacancy_data: dict):
     """Сохранение вакансии в базу данных"""
