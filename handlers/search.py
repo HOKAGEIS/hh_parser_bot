@@ -47,7 +47,7 @@ def _vacancy_to_short_dict(v: Vacancy) -> Dict[str, Any]:
     }
     
     def _hh_html_to_text(s: str | None) -> str:
-    if not s:
+        if not s:
         return ""
     s = re.sub(r"(?i)<br\s*/?>", "\n", s)
     s = re.sub(r"(?i)</p\s*>", "\n\n", s)
@@ -1119,6 +1119,7 @@ async def repeat_search_from_history(callback: CallbackQuery, state: FSMContext)
         parse_mode="HTML",
     )
     await callback.answer("✅ Загружено")
+
 
 
 
