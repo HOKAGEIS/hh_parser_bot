@@ -1,4 +1,4 @@
-# handlers/search.py (ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ)
+# handlers/search.py (ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ - ФИНАЛЬНАЯ ВЕРСИЯ)
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -25,7 +25,7 @@ class SearchStates(StatesGroup):
     entering_salary = State()
     entering_exclude_word = State()
     writing_cover_letter = State()
-    waiting_location = State()  # ← ДОБАВЛЕНО для ожидания геолокации
+    waiting_location = State()  # ← ДОБАВЛЕНО
 
 
 # ==================== HELPERS ====================
@@ -35,7 +35,6 @@ import html
 
 
 def _hh_html_to_text(s: str | None) -> str:
-    """Конвертация HTML в текст"""
     if not s:
         return ""
     s = re.sub(r"(?i)<br\s*/?>", "\n", s)
@@ -49,7 +48,6 @@ def _hh_html_to_text(s: str | None) -> str:
 
 
 def _format_salary_dict(sal: dict | None) -> str:
-    """Форматирование зарплаты из dict"""
     if not sal:
         return ""
     frm = sal.get("from")
@@ -67,7 +65,6 @@ def _format_salary_dict(sal: dict | None) -> str:
 
 
 def _format_salary_obj(v) -> str:
-    """Форматирование зарплаты из object"""
     frm = getattr(v, "salary_from", None)
     to = getattr(v, "salary_to", None)
     cur = getattr(v, "salary_currency", None) or "RUR"
@@ -83,7 +80,6 @@ def _format_salary_obj(v) -> str:
 
 
 async def _safe_edit_text(message, text, reply_markup=None, parse_mode=None, disable_web_page_preview=None):
-    """Безопасное редактирование сообщения"""
     try:
         return await message.edit_text(
             text=text,
@@ -100,7 +96,6 @@ async def _safe_edit_text(message, text, reply_markup=None, parse_mode=None, dis
 
 
 def _vacancy_to_short_dict(vacancy):
-    """Конвертация вакансии в короткий dict для кэша"""
     return {
         "id": getattr(vacancy, "id", ""),
         "name": getattr(vacancy, "name", ""),
@@ -114,7 +109,6 @@ def _vacancy_to_short_dict(vacancy):
 
 
 def _vacancy_from_short_dict(data):
-    """Восстановление вакансии из dict"""
     class TempVacancy:
         def __init__(self, data):
             for key, value in data.items():
@@ -123,7 +117,6 @@ def _vacancy_from_short_dict(data):
 
 
 async def _get_vacancy_at_index(state: FSMContext, index: int):
-    """Получение вакансии по индексу (с подгрузкой страниц)"""
     data = await state.get_data()
     cache_vacancies = data.get("cache_vacancies", [])
     total = data.get("total", 0)
@@ -158,7 +151,6 @@ async def _get_vacancy_at_index(state: FSMContext, index: int):
 
 
 async def _show_vacancy(message, vacancy, index: int, total: int, user_id: int, is_authorized: bool):
-    """Отображение вакансии"""
     salary = getattr(vacancy, "salary", "")
     city = getattr(vacancy, "city", "")
     experience = getattr(vacancy, "experience", "")
@@ -195,7 +187,6 @@ async def _show_vacancy(message, vacancy, index: int, total: int, user_id: int, 
 
 @router.message(F.text == "🔍 Поиск вакансий")
 async def start_search(message: Message, state: FSMContext):
-    """Начало поиска"""
     await db.ensure_user(
         user_id=message.from_user.id,
         username=message.from_user.username,
@@ -214,7 +205,6 @@ async def start_search(message: Message, state: FSMContext):
 
 @router.message(SearchStates.entering_query, F.text)
 async def process_search_query(message: Message, state: FSMContext):
-    """Обработка поискового запроса"""
     query = (message.text or "").strip()
     if len(query) < 2:
         await message.answer("❌ Запрос слишком короткий. Минимум 2 символа.")
@@ -266,7 +256,6 @@ async def process_search_query(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "back_to_filters")
 async def back_to_filters(callback: CallbackQuery, state: FSMContext):
-    """Возврат к фильтрам"""
     await state.set_state(None)
     data = await state.get_data()
     query = data.get("query", "")
@@ -288,7 +277,6 @@ async def back_to_filters(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "filter_city")
 async def filter_city(callback: CallbackQuery, state: FSMContext):
-    """Меню выбора города"""
     await state.set_state(None)
     await _safe_edit_text(
         callback.message,
@@ -302,7 +290,6 @@ async def filter_city(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "enter_city_manual")
 async def enter_city_manual(callback: CallbackQuery, state: FSMContext):
-    """Ручной ввод города"""
     await state.set_state(SearchStates.entering_city)
     await _safe_edit_text(
         callback.message,
@@ -315,7 +302,6 @@ async def enter_city_manual(callback: CallbackQuery, state: FSMContext):
 
 @router.message(SearchStates.entering_city, F.text & ~F.text.startswith("/"))
 async def process_city_input(message: Message, state: FSMContext):
-    """Обработка введенного названия города"""
     city_name = (message.text or "").strip()
 
     if len(city_name) < 2:
@@ -365,7 +351,6 @@ async def process_city_input(message: Message, state: FSMContext):
 
 @router.message(SearchStates.entering_city)
 async def process_city_input_not_text(message: Message, state: FSMContext):
-    """Обработка нетекстового ввода при выборе города"""
     if message.text:
         await state.set_state(None)
         data = await state.get_data()
@@ -380,7 +365,6 @@ async def process_city_input_not_text(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("set_city_"))
 async def set_city(callback: CallbackQuery, state: FSMContext):
-    """Установка выбранного города"""
     payload = callback.data.replace("set_city_", "", 1)
 
     if payload == "any":
@@ -415,7 +399,6 @@ async def set_city(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "request_location")
 async def request_location(callback: CallbackQuery, state: FSMContext):
     """Запрос геолокации"""
-    # ИСПРАВЛЕНИЕ: Устанавливаем состояние ожидания геолокации
     await state.set_state(SearchStates.waiting_location)
     logger.info(f"User {callback.from_user.id} requested location")
 
@@ -428,11 +411,16 @@ async def request_location(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# НОВЫЙ ОБРАБОТЧИК: Отмена запроса геолокации
 @router.message(SearchStates.waiting_location, F.text == "❌ Отмена")
 async def cancel_location_request(message: Message, state: FSMContext):
     """Обработка кнопки Отмена при запросе геолокации"""
     logger.info(f"User {message.from_user.id} cancelled location request")
+
+    # ВАЖНО: Получаем данные ПЕРЕД сбросом состояния
+    data = await state.get_data()
+    query = data.get("query", "")
+
+    # Сбрасываем состояние
     await state.set_state(None)
 
     # Удаляем ReplyKeyboard
@@ -441,13 +429,21 @@ async def cancel_location_request(message: Message, state: FSMContext):
         reply_markup=ReplyKeyboardRemove()
     )
 
-    # Возвращаем меню выбора города
-    await message.answer(
-        "<b>📍 Выбор города</b>\n\n"
-        "Выберите способ указания города:",
-        reply_markup=kb.cities_kb(),
-        parse_mode="HTML",
-    )
+    # Проверяем наличие активного поиска
+    if query:
+        # Если есть активный поиск - возвращаем к фильтрам
+        await message.answer(
+            f"<b>Поиск:</b> {query}\n\n"
+            "Настройте фильтры или начните поиск:",
+            reply_markup=kb.filters_kb(data),
+            parse_mode="HTML",
+        )
+    else:
+        # Если поиска нет - возвращаем в главное меню
+        await message.answer(
+            "Выберите действие:",
+            reply_markup=kb.main_menu_kb(message.from_user.id)
+        )
 
 
 @router.message(SearchStates.waiting_location, F.location)
@@ -465,7 +461,6 @@ async def process_location(message: Message, state: FSMContext):
     )
 
     # TODO: Здесь должна быть логика определения города по координатам
-    # Можно использовать reverse geocoding API
     await message.answer(
         "❌ Определение города по геолокации временно недоступно. "
         "Выберите город из списка или введите вручную.",
@@ -477,7 +472,6 @@ async def process_location(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "filter_salary")
 async def filter_salary(callback: CallbackQuery, state: FSMContext):
-    """Фильтр по зарплате"""
     await state.set_state(None)
     await _safe_edit_text(
         callback.message,
@@ -491,7 +485,6 @@ async def filter_salary(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "enter_salary_manual")
 async def enter_salary_manual(callback: CallbackQuery, state: FSMContext):
-    """Ручной ввод зарплаты"""
     await state.set_state(SearchStates.entering_salary)
     await _safe_edit_text(
         callback.message,
@@ -504,7 +497,6 @@ async def enter_salary_manual(callback: CallbackQuery, state: FSMContext):
 
 @router.message(SearchStates.entering_salary, F.text)
 async def process_salary_input(message: Message, state: FSMContext):
-    """Обработка введенной зарплаты"""
     raw = message.text or ""
     salary_text = "".join(filter(str.isdigit, raw))
 
@@ -541,7 +533,6 @@ async def process_salary_input(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("set_salary_"))
 async def set_salary(callback: CallbackQuery, state: FSMContext):
-    """Установка зарплаты из кнопки"""
     await state.set_state(None)
     salary_str = callback.data.replace("set_salary_", "", 1)
 
@@ -573,7 +564,6 @@ async def set_salary(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "filter_exclude")
 async def filter_exclude(callback: CallbackQuery, state: FSMContext):
-    """Фильтр слов-исключений"""
     await state.set_state(None)
     data = await state.get_data()
     words = data.get("exclude_words", [])
@@ -598,7 +588,6 @@ async def filter_exclude(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "add_exclude_word")
 async def add_exclude_word(callback: CallbackQuery, state: FSMContext):
-    """Добавление слова-исключения"""
     await state.set_state(SearchStates.entering_exclude_word)
     await _safe_edit_text(
         callback.message,
@@ -612,7 +601,6 @@ async def add_exclude_word(callback: CallbackQuery, state: FSMContext):
 
 @router.message(SearchStates.entering_exclude_word, F.text)
 async def process_exclude_word(message: Message, state: FSMContext):
-    """Обработка введенного слова-исключения"""
     word = (message.text or "").strip().lower()
 
     if len(word) < 2:
@@ -646,7 +634,6 @@ async def process_exclude_word(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("remove_exclude_"))
 async def remove_exclude_word(callback: CallbackQuery, state: FSMContext):
-    """Удаление слова-исключения"""
     idx_str = callback.data.replace("remove_exclude_", "", 1)
     data = await state.get_data()
     words = data.get("exclude_words", [])
@@ -675,7 +662,6 @@ async def remove_exclude_word(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "clear_exclude_words")
 async def clear_exclude_words(callback: CallbackQuery, state: FSMContext):
-    """Очистка всех слов-исключений"""
     await state.set_state(None)
     await state.update_data(exclude_words=[])
 
@@ -693,7 +679,6 @@ async def clear_exclude_words(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "filter_experience")
 async def filter_experience(callback: CallbackQuery, state: FSMContext):
-    """Фильтр по опыту работы"""
     await state.set_state(None)
     await _safe_edit_text(
         callback.message,
@@ -707,7 +692,6 @@ async def filter_experience(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("set_exp_"))
 async def set_experience(callback: CallbackQuery, state: FSMContext):
-    """Установка опыта"""
     await state.set_state(None)
     exp = callback.data.replace("set_exp_", "", 1)
 
@@ -728,7 +712,6 @@ async def set_experience(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "filter_schedule")
 async def filter_schedule(callback: CallbackQuery, state: FSMContext):
-    """Фильтр по графику работы"""
     await state.set_state(None)
     await _safe_edit_text(
         callback.message,
@@ -742,7 +725,6 @@ async def filter_schedule(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("set_schedule_"))
 async def set_schedule(callback: CallbackQuery, state: FSMContext):
-    """Установка графика"""
     await state.set_state(None)
     schedule = callback.data.replace("set_schedule_", "", 1)
 
@@ -763,7 +745,6 @@ async def set_schedule(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "filter_reset")
 async def reset_filters(callback: CallbackQuery, state: FSMContext):
-    """Сброс всех фильтров"""
     await state.set_state(None)
     await state.update_data(
         city=None,
@@ -790,7 +771,6 @@ async def reset_filters(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "search_now")
 async def execute_search(callback: CallbackQuery, state: FSMContext):
-    """Выполнение поиска с текущими фильтрами"""
     data = await state.get_data()
 
     if not data.get("query"):
@@ -858,11 +838,12 @@ async def execute_search(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+# Продолжение в следующей части...
+
 # ==================== НАВИГАЦИЯ ПО РЕЗУЛЬТАТАМ ====================
 
 @router.callback_query(SearchStates.viewing_results, F.data.startswith("page_"))
 async def change_page(callback: CallbackQuery, state: FSMContext):
-    """Переключение страниц результатов"""
     data = await state.get_data()
 
     if callback.data == "page_info":
@@ -911,7 +892,6 @@ async def change_page(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("full_"))
 async def show_full_vacancy(callback: CallbackQuery, state: FSMContext):
-    """Показать полное описание вакансии"""
     vacancy_id = callback.data.replace("full_", "", 1)
 
     await _safe_edit_text(callback.message, "⏳ Загружаю полное описание...")
@@ -987,7 +967,6 @@ async def show_full_vacancy(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "back_to_list")
 async def back_to_list(callback: CallbackQuery, state: FSMContext):
-    """Вернуться к списку вакансий"""
     data = await state.get_data()
     current_index = int(data.get("current_index") or 0)
     total = int(data.get("total") or 0)
@@ -1007,7 +986,6 @@ async def back_to_list(callback: CallbackQuery, state: FSMContext):
 # ==================== ИЗБРАННОЕ ====================
 
 async def _refresh_current_markup(callback: CallbackQuery, state: FSMContext, vacancy_id: str):
-    """Обновление кнопок текущей вакансии"""
     data = await state.get_data()
     total = int(data.get("total") or 0)
     current_index = int(data.get("current_index") or 0)
@@ -1028,7 +1006,6 @@ async def _refresh_current_markup(callback: CallbackQuery, state: FSMContext, va
 
 @router.callback_query(F.data.startswith("fav_"))
 async def add_to_fav(callback: CallbackQuery, state: FSMContext):
-    """Добавить в избранное"""
     vacancy_id = callback.data.replace("fav_", "", 1)
 
     data = await state.get_data()
@@ -1051,7 +1028,6 @@ async def add_to_fav(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("unfav_"))
 async def remove_from_fav(callback: CallbackQuery, state: FSMContext):
-    """Убрать из избранного"""
     vacancy_id = callback.data.replace("unfav_", "", 1)
 
     removed = await db.remove_favorite(callback.from_user.id, vacancy_id)
@@ -1067,7 +1043,6 @@ async def remove_from_fav(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "subscribe_current")
 async def subscribe_from_search(callback: CallbackQuery, state: FSMContext):
-    """Создать подписку на текущий запрос"""
     data = await state.get_data()
 
     count = await db.get_subscriptions_count(callback.from_user.id)
@@ -1113,7 +1088,6 @@ async def subscribe_from_search(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "close_search")
 async def close_search(callback: CallbackQuery, state: FSMContext):
-    """Закрыть результаты поиска"""
     await state.clear()
     try:
         await callback.message.delete()
@@ -1124,7 +1098,6 @@ async def close_search(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "cancel")
 async def cancel(callback: CallbackQuery, state: FSMContext):
-    """Отмена текущего действия"""
     await state.clear()
     try:
         await callback.message.delete()
@@ -1141,7 +1114,6 @@ async def cancel(callback: CallbackQuery, state: FSMContext):
 
 @router.message(F.text == "🕐 История поиска")
 async def show_search_history_menu(message: Message, state: FSMContext):
-    """Показать историю поиска"""
     await state.clear()
 
     history = await db.get_search_history(message.from_user.id, limit=10)
@@ -1158,13 +1130,11 @@ async def show_search_history_menu(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "history_empty")
 async def history_empty(callback: CallbackQuery):
-    """История пуста"""
     await callback.answer("История поиска пуста", show_alert=True)
 
 
 @router.callback_query(F.data == "clear_history")
 async def clear_history(callback: CallbackQuery):
-    """Очистить историю"""
     await db.clear_search_history(callback.from_user.id)
     await callback.message.edit_text(
         "<b>🕐 История поиска</b>\n\n"
@@ -1177,7 +1147,6 @@ async def clear_history(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("repeat_search_"))
 async def repeat_search_from_history(callback: CallbackQuery, state: FSMContext):
-    """Повторить поиск из истории"""
     idx_str = callback.data.replace("repeat_search_", "", 1)
 
     try:
@@ -1236,11 +1205,9 @@ async def repeat_search_from_history(callback: CallbackQuery, state: FSMContext)
 
 @router.callback_query(SearchStates.viewing_results)
 async def unknown_callback_in_results(callback: CallbackQuery):
-    """Неизвестный callback в режиме просмотра"""
     await callback.answer("Кнопка неактуальна или не поддерживается.", show_alert=False)
 
 
 @router.message(SearchStates.viewing_results)
 async def unknown_message_in_results(message: Message, state: FSMContext):
-    """Неизвестное сообщение в режиме просмотра"""
     await message.answer("Используйте кнопки навигации под вакансией или нажмите ❌ Закрыть.")
