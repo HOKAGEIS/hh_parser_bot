@@ -1,4 +1,4 @@
-# database.py (полный исправленный код)
+# database.py (полностью исправленный код)
 import aiosqlite
 import json
 from datetime import datetime
@@ -540,7 +540,7 @@ async def get_search_history(user_id: int, limit: int = 10) -> List[Dict[str, An
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute('''
-            SELECT * FROM search_queries 
+            SELECT query, filters, created_at FROM search_queries 
             WHERE user_id = ? 
             ORDER BY created_at DESC 
             LIMIT ?
@@ -555,6 +555,12 @@ async def get_search_history(user_id: int, limit: int = 10) -> List[Dict[str, An
                     record['filters'] = json.loads(record['filters'])
                 except:
                     record['filters'] = {}
+                    
+            # Добавляем поля city и city_name из filters для совместимости с keyboards.py
+            filters_data = record['filters']
+            record['city'] = filters_data.get('city')
+            record['city_name'] = filters_data.get('city_name', '')
+            
             history.append(record)
         
         return history
