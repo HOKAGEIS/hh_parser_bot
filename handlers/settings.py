@@ -37,7 +37,11 @@ async def show_applications(message: Message):
     await message.answer(
         "📨 <b>Мои отклики</b>\n\n"
         "🚧 <i>Функция в разработке</i>\n\n"
-        "Для откликов требуется интеграция с API HH.ru.\n"
+        "Для откликов на вакансии требуется интеграция с API HH.ru.\n\n"
+        "Как только вы подключите аккаунт HH.ru, здесь будет:\n"
+        "• История ваших откликов\n"
+        "• Статусы откликов\n"
+        "• Приглашения на собеседования\n\n"
         "Следите за обновлениями!",
         reply_markup=kb.main_menu_kb(message.from_user.id),
         parse_mode="HTML"
@@ -51,7 +55,11 @@ async def show_letters(message: Message):
     await message.answer(
         "✉️ <b>Сопроводительные письма</b>\n\n"
         "🚧 <i>Функция в разработке</i>\n\n"
-        "Скоро вы сможете создавать шаблоны писем.\n"
+        "Скоро вы сможете:\n"
+        "• Создавать шаблоны писем\n"
+        "• Редактировать письма\n"
+        "• Выбирать письмо при отклике\n"
+        "• Использовать шаблоны с переменными\n\n"
         "Следите за обновлениями!",
         reply_markup=kb.main_menu_kb(message.from_user.id),
         parse_mode="HTML"
@@ -314,4 +322,5 @@ async def toggle_notifications(callback: CallbackQuery):
         parse_mode="HTML"
     )
     await callback.answer()
+
 
