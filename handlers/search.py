@@ -387,6 +387,68 @@ async def set_city(callback: CallbackQuery, state: FSMContext):
     await callback.answer(f"✅ Выбрано: {city_display}")
 
 
+# ==================== ГЕОЛОКАЦИЯ ====================
+
+@router.callback_query(F.data == "request_location")
+async def request_location(callback: CallbackQuery):
+    await callback.message.answer(
+        "📍 <b>Отправьте ваше местоположение</b>\n\n"
+        "Нажмите на кнопку 📍 'Отправить местоположение' внизу экрана.",
+        reply_markup=kb.location_request_kb(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.message(F.location)
+async def process_location(message: Message, state: FSMContext):
+    lat = message.location.latitude
+    lon = message.location.longitude
+
+    await message.answer("🔍 Ищу город по координатам...")
+
+    # Получаем город по координатам через API HH
+    city_name = await hh.search_area_by_coordinates(lat, lon)
+    if not city_name:
+        await message.answer(
+            "😔 Не удалось определить город по координатам.\n\n"
+            "Попробуйте ввести название вручную:",
+            reply_markup=kb.back_kb("filter_city")
+        )
+        return
+
+    # Ищем ID города в популярных городах
+    city_id = None
+    for id, name in Config.POPULAR_CITIES.items():
+        if name.lower() == city_name.lower():
+            city_id = id
+            break
+
+    # Если не найден в популярных, пробуем найти через API
+    if not city_id:
+        cities = await hh.search_area(city_name)
+        if cities:
+            city_id = str(cities[0].get("id"))
+            city_name = cities[0].get("text", cities[0].get("name", city_name))
+
+    if city_id:
+        await state.update_data(city=city_id, city_name=city_name)
+
+        data = await state.get_data()
+        await message.answer(
+            f"✅ Определён город: <b>{city_name}</b>\n\n"
+            f"🔍 Запрос: <b>{data.get('query')}</b>",
+            reply_markup=kb.filters_kb(data),
+            parse_mode="HTML"
+        )
+    else:
+        await message.answer(
+            "😔 Не удалось определить город.\n\n"
+            "Попробуйте ввести название вручную:",
+            reply_markup=kb.back_kb("filter_city")
+        )
+
+
 # ==================== ЗАРПЛАТА ====================
 
 @router.callback_query(F.data == "filter_salary")
