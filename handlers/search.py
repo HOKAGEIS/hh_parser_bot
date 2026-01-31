@@ -12,8 +12,6 @@ from aiogram.types import Message, CallbackQuery
 
 import database as db
 import keyboards as kb
-import re
-import html
 from hh_api import hh, Vacancy
 from config import config
 
@@ -31,23 +29,12 @@ class SearchStates(StatesGroup):
 
 # -------------------- helpers --------------------
 
-def _vacancy_to_short_dict(v: Vacancy) -> Dict[str, Any]:
-    return {
-        "id": v.id,
-        "name": v.name,
-        "url": v.url,
-        "employer": v.employer,
-        "salary_from": v.salary_from,
-        "salary_to": v.salary_to,
-        "salary_currency": v.salary_currency,
-        "city": v.city,
-        "experience": v.experience,
-        "schedule": v.schedule,
-        "requirement": v.requirement,
-    }
-    
-    def _hh_html_to_text(s: str | None) -> str:
-        if not s:
+import re
+import html
+
+
+def _hh_html_to_text(s: str | None) -> str:
+    if not s:
         return ""
     s = re.sub(r"(?i)<br\s*/?>", "\n", s)
     s = re.sub(r"(?i)</p\s*>", "\n\n", s)
@@ -91,125 +78,6 @@ def _format_salary_obj(v) -> str:
     if to:
         return f"до {to:,} {cur_sym}".replace(",", " ")
     return "не указана"
-
-
-def _vacancy_from_short_dict(v: Dict[str, Any]) -> Vacancy:
-    # Сигнатура соответствует вашему коду в back_to_list
-    return Vacancy(
-        id=v["id"],
-        name=v["name"],
-        url=v["url"],
-        employer=v["employer"],
-        employer_id=None,
-        employer_logo=None,
-        salary_from=v.get("salary_from"),
-        salary_to=v.get("salary_to"),
-        salary_currency=v.get("salary_currency"),
-        city=v.get("city", ""),
-        experience=v.get("experience", ""),
-        schedule=v.get("schedule", ""),
-        employment="",
-        requirement=v.get("requirement"),
-        responsibility=None,
-        description=None,
-        key_skills=[],
-        published_at="",
-        has_test=False,
-        response_letter_required=False,
-    )
-
-
-async def _safe_edit_text(message, text: str, **kwargs) -> None:
-    try:
-        await message.edit_text(text, **kwargs)
-    except TelegramBadRequest as e:
-        # Частая ситуация: пытаемся отредактировать на тот же текст
-        if "message is not modified" in str(e):
-            # если есть markup — попробуем обновить только его
-            rm = kwargs.get("reply_markup")
-            if rm is not None:
-                try:
-                    await message.edit_reply_markup(reply_markup=rm)
-                except TelegramBadRequest:
-                    pass
-            return
-        raise
-
-
-async def _get_vacancy_at_index(state: FSMContext, index: int) -> Tuple[Optional[Vacancy], int]:
-    """
-    index — глобальный индекс вакансии: 0..total-1
-    Достаём нужную страницу HH API, кешируем её в FSM и возвращаем одну вакансию + total.
-    """
-    data = await state.get_data()
-
-    query = data.get("query")
-    if not query:
-        return None, 0
-
-    per_page = int(data.get("per_page") or config.VACANCIES_PER_PAGE)
-    if per_page <= 0:
-        per_page = config.VACANCIES_PER_PAGE
-
-    api_page = index // per_page
-    offset = index % per_page
-
-    cache_page = data.get("cache_page")
-    cache_vacancies = data.get("cache_vacancies") or []
-    total = int(data.get("total") or 0)
-
-    if cache_page != api_page or not cache_vacancies:
-        vacancies, total_api = await hh.search_vacancies(
-            text=query,
-            area=data.get("city"),
-            experience=data.get("experience"),
-            schedule=data.get("schedule"),
-            salary=data.get("salary"),
-            only_with_salary=data.get("only_with_salary", False),
-            exclude_words=data.get("exclude_words", []),
-            page=api_page,
-            per_page=per_page,
-        )
-        total = int(total_api or 0)
-
-        cache_vacancies = [_vacancy_to_short_dict(v) for v in vacancies]
-        await state.update_data(cache_page=api_page, cache_vacancies=cache_vacancies, total=total)
-
-    if offset < 0 or offset >= len(cache_vacancies):
-        return None, total
-
-    return _vacancy_from_short_dict(cache_vacancies[offset]), total
-
-
-async def show_vacancy_message(message, vacancy: Vacancy, index: int, total: int, user_id: int, is_authorized: bool):
-    """
-    index — глобальный индекс (0..total-1)
-    total — всего вакансий
-    """
-    is_fav = await db.is_favorite(user_id, vacancy.id)
-    is_applied = await db.was_applied(user_id, vacancy.id)
-
-    text = (
-        f"📊 <b>Найдено: {total:,} вакансий</b>\n".replace(",", " ")
-        + f"<i>Вакансия {index + 1} из {total:,}</i>\n\n".replace(",", " ")
-        + vacancy.to_short_message()
-    )
-
-    await _safe_edit_text(
-        message,
-        text,
-        reply_markup=kb.vacancy_kb(
-            vacancy.id,
-            is_fav,
-            index,      # теперь это global index
-            total,      # теперь это total вакансий (а не total_pages)
-            is_applied,
-            is_authorized,
-        ),
-        parse_mode="HTML",
-        disable_web_page_preview=True,
-    )
-
 
 # ==================== НАЧАЛО ПОИСКА ====================
 
@@ -1119,6 +987,7 @@ async def repeat_search_from_history(callback: CallbackQuery, state: FSMContext)
         parse_mode="HTML",
     )
     await callback.answer("✅ Загружено")
+
 
 
 
