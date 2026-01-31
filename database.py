@@ -1,4 +1,4 @@
-# database.py (добавлена функция get_open_ticket)
+# database.py (полный исправленный код)
 import aiosqlite
 import json
 from datetime import datetime
@@ -522,3 +522,63 @@ async def get_all_open_tickets() -> List[Dict[str, Any]]:
         ''')
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
+
+
+# --- Новые функции для поиска ---
+async def add_search_history(user_id: int, query: str, filters: Dict[str, Any]) -> None:
+    """Добавление записи в историю поиска"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            INSERT INTO search_queries (user_id, query, filters)
+            VALUES (?, ?, ?)
+        ''', (user_id, query, json.dumps(filters, ensure_ascii=False)))
+        await db.commit()
+
+
+async def get_search_history(user_id: int, limit: int = 10) -> List[Dict[str, Any]]:
+    """Получение истории поиска пользователя"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute('''
+            SELECT * FROM search_queries 
+            WHERE user_id = ? 
+            ORDER BY created_at DESC 
+            LIMIT ?
+        ''', (user_id, limit))
+        rows = await cursor.fetchall()
+        
+        history = []
+        for row in rows:
+            record = dict(row)
+            if record['filters']:
+                try:
+                    record['filters'] = json.loads(record['filters'])
+                except:
+                    record['filters'] = {}
+            history.append(record)
+        
+        return history
+
+
+async def was_applied(user_id: int, vacancy_id: str) -> bool:
+    """Проверка, откликался ли пользователь на вакансию (фиктивная реализация)"""
+    # В текущей схеме нет таблицы для откликов, поэтому всегда возвращаем False
+    return False
+
+
+async def get_subscriptions_count(user_id: int) -> int:
+    """Получение количества подписок пользователя"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute('''
+            SELECT COUNT(*) FROM subscriptions 
+            WHERE user_id = ? AND is_active = TRUE
+        ''', (user_id,))
+        count = (await cursor.fetchone())[0]
+        return count
+
+
+async def clear_search_history(user_id: int) -> None:
+    """Очистка истории поиска пользователя"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('DELETE FROM search_queries WHERE user_id = ?', (user_id,))
+        await db.commit()
