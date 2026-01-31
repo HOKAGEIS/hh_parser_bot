@@ -12,6 +12,8 @@ from aiogram.types import Message, CallbackQuery
 
 import database as db
 import keyboards as kb
+import re
+import html
 from hh_api import hh, Vacancy
 from config import config
 
@@ -773,9 +775,6 @@ async def change_page(callback: CallbackQuery, state: FSMContext):
 
 # ==================== ПОЛНОЕ ОПИСАНИЕ ====================
 
-import logging
-log = logging.getLogger(__name__)
-
 @router.callback_query(F.data.startswith("full_"))
 async def show_full_vacancy(callback: CallbackQuery, state: FSMContext):
     vacancy_id = callback.data.replace("full_", "", 1)
@@ -791,30 +790,40 @@ async def show_full_vacancy(callback: CallbackQuery, state: FSMContext):
     is_authorized = bool(user and getattr(user, "hh_access_token", None))
     is_applied = await db.was_applied(callback.from_user.id, vacancy_id)
 
-    # 1) Если hh.get_vacancy_full вернул dict/что-то не то — не падаем
-    if not hasattr(vacancy, "to_full_message"):
-        log.error("get_vacancy_full(%s) returned %s: %r", vacancy_id, type(vacancy), vacancy)
-        await _safe_edit_text(
-            callback.message,
-            "❌ Ошибка формата данных вакансии (нет to_full_message).\n\n"
-            "Попробуйте позже или откройте вакансию на hh.ru.",
-            reply_markup=kb.vacancy_full_kb(vacancy_id, is_authorized, is_applied),
-            parse_mode="HTML",
-            disable_web_page_preview=True,
-        )
-        await callback.answer("Ошибка данных", show_alert=True)
-        return
-
-    # 2) Если внутри to_full_message что-то упало — тоже не падаем
-    try:
+    # 1) Нормальный случай: это Vacancy
+    if hasattr(vacancy, "to_full_message"):
         text = vacancy.to_full_message()
-    except Exception as e:
-        log.exception("to_full_message failed for vacancy_id=%s: %s", vacancy_id, e)
-        # фолбек на короткое сообщение
-        if hasattr(vacancy, "to_short_message"):
-            text = "⚠️ Полное описание временно недоступно.\n\n" + vacancy.to_short_message()
-        else:
-            text = "⚠️ Полное описание временно недоступно."
+    else:
+        # 2) Частый случай у тебя сейчас: это dict (JSON от HH)
+        v = vacancy
+
+        title = v.get("name") or "Вакансия"
+        url = v.get("alternate_url") or v.get("url") or ""
+        employer = (v.get("employer") or {}).get("name") or "—"
+        area = (v.get("area") or {}).get("name") or "—"
+        experience = (v.get("experience") or {}).get("name") or "—"
+        schedule = (v.get("schedule") or {}).get("name") or "—"
+        employment = (v.get("employment") or {}).get("name") or "—"
+        salary = _format_salary_from_hh(v.get("salary"))
+
+        desc_raw = v.get("description") or ""
+        desc = _hh_html_to_text(desc_raw)
+
+        text = (
+            f"📄 <b>{title}</b>\n\n"
+            f"🏢 <b>Компания:</b> {employer}\n"
+            f"📍 <b>Город:</b> {area}\n"
+            f"💰 <b>Зарплата:</b> {salary}\n"
+            f"💼 <b>Опыт:</b> {experience}\n"
+            f"⏰ <b>График:</b> {schedule}\n"
+            f"📋 <b>Занятость:</b> {employment}\n"
+        )
+
+        if url:
+            text += f"\n🔗 <a href=\"{url}\">Открыть на hh.ru</a>\n"
+
+        if desc:
+            text += "\n<b>Описание:</b>\n" + desc
 
     if len(text) > 4000:
         text = text[:4000] + "\n\n<i>...текст обрезан. Откройте на hh.ru для полной версии</i>"
@@ -1031,5 +1040,6 @@ async def repeat_search_from_history(callback: CallbackQuery, state: FSMContext)
         parse_mode="HTML",
     )
     await callback.answer("✅ Загружено")
+
 
 
