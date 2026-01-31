@@ -1,4 +1,4 @@
-# handlers/search.py (ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ - ФИНАЛЬНАЯ ВЕРСИЯ)
+# handlers/search.py (ФИНАЛЬНАЯ ВЕРСИЯ - ВСЕ ИСПРАВЛЕНИЯ)
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -416,7 +416,7 @@ async def cancel_location_request(message: Message, state: FSMContext):
     """Обработка кнопки Отмена при запросе геолокации"""
     logger.info(f"User {message.from_user.id} cancelled location request")
 
-    # ВАЖНО: Получаем данные ПЕРЕД сбросом состояния
+    # Получаем данные ПЕРЕД сбросом состояния
     data = await state.get_data()
     query = data.get("query", "")
 
@@ -431,7 +431,7 @@ async def cancel_location_request(message: Message, state: FSMContext):
 
     # Проверяем наличие активного поиска
     if query:
-        # Если есть активный поиск - возвращаем к фильтрам
+        # Возвращаем к фильтрам поиска
         await message.answer(
             f"<b>Поиск:</b> {query}\n\n"
             "Настройте фильтры или начните поиск:",
@@ -439,7 +439,7 @@ async def cancel_location_request(message: Message, state: FSMContext):
             parse_mode="HTML",
         )
     else:
-        # Если поиска нет - возвращаем в главное меню
+        # Возвращаем в главное меню
         await message.answer(
             "Выберите действие:",
             reply_markup=kb.main_menu_kb(message.from_user.id)
@@ -511,7 +511,7 @@ async def process_salary_input(message: Message, state: FSMContext):
         return
 
     if salary < 1000:
-        await message.answer("❌ Слишком маленькая зарплата. Минимум 50000")
+        await message.answer("❌ Слишком маленькая зарплата. Минимум 1000")
         return
 
     if salary > 10000000:
@@ -838,8 +838,6 @@ async def execute_search(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# Продолжение в следующей части...
-
 # ==================== НАВИГАЦИЯ ПО РЕЗУЛЬТАТАМ ====================
 
 @router.callback_query(SearchStates.viewing_results, F.data.startswith("page_"))
@@ -1096,17 +1094,33 @@ async def close_search(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+# ==================== ОТМЕНА (ИСПРАВЛЕНО) ====================
+
 @router.callback_query(F.data == "cancel")
 async def cancel(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    try:
-        await callback.message.delete()
-    except:
-        await callback.message.edit_text("❌ Отменено")
-        await callback.message.answer(
-            "Выберите действие:",
-            reply_markup=kb.main_menu_kb(callback.from_user.id)
+    """Обработка кнопки Отмена в inline-меню"""
+    # Получаем данные ПЕРЕД очисткой state
+    data = await state.get_data()
+    query = data.get("query", "")
+
+    await state.set_state(None)  # Сбрасываем состояние
+
+    if query:
+        # Если есть активный поиск - возвращаем к фильтрам
+        await _safe_edit_text(
+            callback.message,
+            f"<b>Поиск:</b> {query}\n\n"
+            "Настройте фильтры или начните поиск:",
+            reply_markup=kb.filters_kb(data),
+            parse_mode="HTML",
         )
+    else:
+        # Если поиска нет - удаляем сообщение
+        try:
+            await callback.message.delete()
+        except:
+            await callback.message.edit_text("❌ Отменено")
+
     await callback.answer()
 
 
