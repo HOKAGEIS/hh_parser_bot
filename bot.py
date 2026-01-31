@@ -6,7 +6,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 
-from config import config
+from config import Config
 import database as db
 import keyboards as kb
 
@@ -18,13 +18,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Проверка токена
-if not config.BOT_TOKEN or len(config.BOT_TOKEN) < 40:
+Config.validate()
+if not Config.TELEGRAM_BOT_TOKEN or len(Config.TELEGRAM_BOT_TOKEN) < 40:
     print("❌ ОШИБКА: Токен бота не настроен!")
     exit(1)
 
 # Инициализация
 bot = Bot(
-    token=config.BOT_TOKEN,
+    token=Config.TELEGRAM_BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
 dp = Dispatcher()
@@ -34,7 +35,10 @@ dp = Dispatcher()
 async def cmd_start(message: Message):
     logger.info(f"✅ /start от {message.from_user.id}")
     
-    await db.create_user(message.from_user.id, message.from_user.username)
+    try:
+        await db.add_user_async(message.from_user.id)
+    except Exception as e:
+        logger.error(f"Ошибка при добавлении пользователя: {e}")
     
     await message.answer(
         f"👋 Привет, <b>{message.from_user.first_name}</b>!\n\n"
@@ -71,7 +75,7 @@ async def cmd_help(message: Message):
 async def main():
     # Инициализация БД
     try:
-        await db.init_db()
+        db.init_db()
         logger.info("✅ База данных инициализирована")
     except Exception as e:
         logger.error(f"❌ Ошибка БД: {e}")
