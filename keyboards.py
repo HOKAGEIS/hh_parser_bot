@@ -22,6 +22,10 @@ def main_menu_kb(user_id: int = None) -> ReplyKeyboardMarkup:
         KeyboardButton(text="📊 Аналитика")
     )
     builder.row(
+        KeyboardButton(text="📨 Мои отклики"),
+        KeyboardButton(text="✉️ Письма")
+    )
+    builder.row(
         KeyboardButton(text="🕐 История поиска"),
         KeyboardButton(text="⚙️ Настройки")
     )
@@ -447,3 +451,4 @@ def admin_back_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back"))
     return builder.as_markup()
+
