@@ -1,4 +1,4 @@
-# handlers/admin.py (ИСПРАВЛЕННЫЙ - добавлен обработчик "Пользователи")
+# handlers/admin.py (ИСПРАВЛЕНО - правильные названия колонок БД)
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
@@ -8,8 +8,10 @@ import sqlite3
 import database as db
 import keyboards as kb
 from config import Config
+import logging
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 
 class AdminStates(StatesGroup):
@@ -17,15 +19,22 @@ class AdminStates(StatesGroup):
 
 
 def is_admin(user_id: int) -> bool:
-    return user_id in Config.ADMIN_IDS
+    """Проверка, является ли пользователь администратором"""
+    result = user_id in Config.ADMIN_IDS
+    logger.info(f"Admin check for user {user_id}: {result} (Admin IDs: {Config.ADMIN_IDS})")
+    return result
 
 
 # ==================== АДМИН-ПАНЕЛЬ ====================
 
 @router.message(Command("admin"))
 async def admin_panel(message: Message):
+    """Команда /admin"""
+    logger.info(f"User {message.from_user.id} tried to access admin panel via /admin")
+
     if not is_admin(message.from_user.id):
         await message.answer("❌ Доступ запрещен")
+        logger.warning(f"User {message.from_user.id} denied admin access")
         return
 
     conn = sqlite3.connect(Config.DATABASE_PATH)
@@ -34,7 +43,8 @@ async def admin_panel(message: Message):
     cursor.execute("SELECT COUNT(*) FROM users")
     total_users = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM subscriptions WHERE active = 1")
+    # ИСПРАВЛЕНО: active → is_active
+    cursor.execute("SELECT COUNT(*) FROM subscriptions WHERE is_active = 1")
     total_subs = cursor.fetchone()[0]
 
     cursor.execute("SELECT COUNT(*) FROM favorites")
@@ -54,12 +64,17 @@ async def admin_panel(message: Message):
         reply_markup=kb.admin_kb(),
         parse_mode="HTML"
     )
+    logger.info(f"Admin panel shown to user {message.from_user.id}")
 
 
-@router.message(F.text == "🔧 Админ-панель")
+@router.message(F.text == "👑 Админ-панель")  # ИСПРАВЛЕНО: 🔧 → 👑
 async def admin_panel_button(message: Message):
+    """Обработчик кнопки '👑 Админ-панель'"""
+    logger.info(f"User {message.from_user.id} clicked admin panel button")
+
     if not is_admin(message.from_user.id):
         await message.answer("❌ Доступ запрещен")
+        logger.warning(f"User {message.from_user.id} denied admin access via button")
         return
 
     conn = sqlite3.connect(Config.DATABASE_PATH)
@@ -68,7 +83,8 @@ async def admin_panel_button(message: Message):
     cursor.execute("SELECT COUNT(*) FROM users")
     total_users = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM subscriptions WHERE active = 1")
+    # ИСПРАВЛЕНО: active → is_active
+    cursor.execute("SELECT COUNT(*) FROM subscriptions WHERE is_active = 1")
     total_subs = cursor.fetchone()[0]
 
     cursor.execute("SELECT COUNT(*) FROM favorites")
@@ -88,6 +104,7 @@ async def admin_panel_button(message: Message):
         reply_markup=kb.admin_kb(),
         parse_mode="HTML"
     )
+    logger.info(f"Admin panel shown to user {message.from_user.id}")
 
 
 # ==================== СТАТИСТИКА ====================
@@ -134,11 +151,13 @@ async def admin_stats(callback: CallbackQuery):
     await callback.answer()
 
 
-# ==================== ПОЛЬЗОВАТЕЛИ (НОВЫЙ ОБРАБОТЧИК) ====================
+# ==================== ПОЛЬЗОВАТЕЛИ ====================
 
 @router.callback_query(F.data == "admin_users")
 async def admin_users(callback: CallbackQuery):
     """Обработчик кнопки 'Пользователи'"""
+    logger.info(f"Admin {callback.from_user.id} viewing users list")
+
     if not is_admin(callback.from_user.id):
         await callback.answer("❌ Доступ запрещен", show_alert=True)
         return
@@ -162,10 +181,11 @@ async def admin_users(callback: CallbackQuery):
     # Активные пользователи (за последние 7 дней)
     cursor.execute("""
         SELECT COUNT(DISTINCT user_id)
-        FROM search_history
+        FROM search_queries
         WHERE created_at >= datetime('now', '-7 days')
     """)
-    active_users = cursor.fetchone()[0]
+    result = cursor.fetchone()
+    active_users = result[0] if result else 0
 
     conn.close()
 
@@ -189,8 +209,8 @@ async def admin_users(callback: CallbackQuery):
             reply_markup=kb.admin_back_kb(), 
             parse_mode="HTML"
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"Error editing message: {e}")
 
     await callback.answer()
 
