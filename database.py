@@ -1,322 +1,415 @@
-# database.py (исправленный код)
-import sqlite3
+# database.py
+import aiosqlite
 import json
 from datetime import datetime
-from typing import List, Tuple, Optional
-import os
+from typing import Optional, List, Dict, Any
+from pathlib import Path
 from config import Config
 
-def init_db():
+# Путь к базе данных
+DB_PATH = Path(Config.DATABASE_PATH)
+
+
+async def init_db():
     """Инициализация базы данных"""
-    conn = sqlite3.connect(Config.DATABASE_PATH)
-    cursor = conn.cursor()
-    
-    # Таблица пользователей
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Таблица пользователей
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_premium BOOLEAN DEFAULT FALSE,
+                is_blocked BOOLEAN DEFAULT FALSE,
+                language_code TEXT DEFAULT 'ru',
+                settings TEXT DEFAULT '{}'
+            )
+        ''')
+        
+        # Таблица поисковых запросов
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS search_queries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                query TEXT,
+                filters TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        ''')
+        
+        # Таблица избранных вакансий
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS favorites (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                vacancy_id TEXT,
+                vacancy_data TEXT,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (user_id),
+                UNIQUE(user_id, vacancy_id)
+            )
+        ''')
+        
+        # Таблица подписок
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                name TEXT,
+                query TEXT,
+                filters TEXT,
+                last_check TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT TRUE,
+                notification_time TEXT DEFAULT '10:00',
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        ''')
+        
+        # Таблица истории уведомлений
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS notification_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subscription_id INTEGER,
+                vacancy_id TEXT,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (subscription_id) REFERENCES subscriptions (id)
+            )
+        ''')
+        
+        # Таблица настроек пользователей
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS user_settings (
+                user_id INTEGER PRIMARY KEY,
+                city_id TEXT,
+                city_name TEXT,
+                experience TEXT,
+                schedule TEXT,
+                employment TEXT,
+                salary_from INTEGER,
+                only_with_salary BOOLEAN DEFAULT FALSE,
+                exclude_words TEXT,
+                notifications_enabled BOOLEAN DEFAULT TRUE,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        ''')
+        
+        await db.commit()
+
+
+async def ensure_user(user_id: int, username: str = None, first_name: str = None, 
+                     last_name: str = None, language_code: str = 'ru') -> None:
+    """Создание или обновление пользователя"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Проверяем существует ли пользователь
+        cursor = await db.execute(
+            'SELECT user_id FROM users WHERE user_id = ?',
+            (user_id,)
         )
-    ''')
-    
-    # Таблица вакансий
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS vacancies (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            company TEXT NOT NULL,
-            url TEXT NOT NULL,
-            description TEXT,
-            requirements TEXT,
-            salary_min INTEGER,
-            salary_max INTEGER,
-            currency TEXT,
-            area TEXT,
-            experience TEXT,
-            schedule TEXT,
-            employment TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        exists = await cursor.fetchone()
+        
+        if exists:
+            # Обновляем последнюю активность
+            await db.execute('''
+                UPDATE users 
+                SET last_active = CURRENT_TIMESTAMP,
+                    username = COALESCE(?, username),
+                    first_name = COALESCE(?, first_name),
+                    last_name = COALESCE(?, last_name)
+                WHERE user_id = ?
+            ''', (username, first_name, last_name, user_id))
+        else:
+            # Создаём нового пользователя
+            await db.execute('''
+                INSERT INTO users (user_id, username, first_name, last_name, language_code)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (user_id, username, first_name, last_name, language_code))
+            
+            # Создаём настройки по умолчанию
+            await db.execute('''
+                INSERT INTO user_settings (user_id)
+                VALUES (?)
+            ''', (user_id,))
+        
+        await db.commit()
+
+
+async def get_user(user_id: int) -> Optional[Dict[str, Any]]:
+    """Получение информации о пользователе"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            'SELECT * FROM users WHERE user_id = ?',
+            (user_id,)
         )
-    ''')
-    
-    # Таблица избранных вакансий
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS favorites (
-            user_id INTEGER,
-            vacancy_id TEXT,
-            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (user_id, vacancy_id),
-            FOREIGN KEY (user_id) REFERENCES users (id),
-            FOREIGN KEY (vacancy_id) REFERENCES vacancies (id)
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def get_user_settings(user_id: int) -> Dict[str, Any]:
+    """Получение настроек пользователя"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            'SELECT * FROM user_settings WHERE user_id = ?',
+            (user_id,)
         )
-    ''')
-    
-    # Таблица истории поиска
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS search_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            query TEXT NOT NULL,
-            timestamp REAL,
-            filters TEXT,
-            FOREIGN KEY (user_id) REFERENCES users (id)
+        row = await cursor.fetchone()
+        if row:
+            settings = dict(row)
+            # Преобразуем exclude_words из JSON строки в список
+            if settings.get('exclude_words'):
+                try:
+                    settings['exclude_words'] = json.loads(settings['exclude_words'])
+                except:
+                    settings['exclude_words'] = []
+            return settings
+        return {
+            'city_id': None,
+            'city_name': None,
+            'experience': None,
+            'schedule': None,
+            'employment': None,
+            'salary_from': None,
+            'only_with_salary': False,
+            'exclude_words': [],
+            'notifications_enabled': True
+        }
+
+
+async def update_user_settings(user_id: int, **kwargs) -> None:
+    """Обновление настроек пользователя"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Проверяем существуют ли настройки
+        cursor = await db.execute(
+            'SELECT user_id FROM user_settings WHERE user_id = ?',
+            (user_id,)
         )
-    ''')
-    
-    # Таблица подписок
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS subscriptions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            query TEXT NOT NULL,
-            filters TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            is_active BOOLEAN DEFAULT TRUE,
-            FOREIGN KEY (user_id) REFERENCES users (id)
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
+        exists = await cursor.fetchone()
+        
+        # Преобразуем exclude_words в JSON если это список
+        if 'exclude_words' in kwargs and isinstance(kwargs['exclude_words'], list):
+            kwargs['exclude_words'] = json.dumps(kwargs['exclude_words'], ensure_ascii=False)
+        
+        if exists:
+            # Обновляем существующие настройки
+            set_clause = ', '.join([f"{k} = ?" for k in kwargs.keys()])
+            set_clause += ', updated_at = CURRENT_TIMESTAMP'
+            values = list(kwargs.values()) + [user_id]
+            
+            await db.execute(
+                f'UPDATE user_settings SET {set_clause} WHERE user_id = ?',
+                values
+            )
+        else:
+            # Создаём новые настройки
+            kwargs['user_id'] = user_id
+            keys = ', '.join(kwargs.keys())
+            placeholders = ', '.join(['?' for _ in kwargs])
+            
+            await db.execute(
+                f'INSERT INTO user_settings ({keys}) VALUES ({placeholders})',
+                list(kwargs.values())
+            )
+        
+        await db.commit()
 
-def add_user(user_id: int):
-    """Добавление пользователя в базу данных"""
-    conn = sqlite3.connect(Config.DATABASE_PATH)
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute('INSERT OR IGNORE INTO users (id) VALUES (?)', (user_id,))
-        conn.commit()
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
-    finally:
-        conn.close()
 
-def save_vacancy(vacancy_data: dict):
-    """Сохранение вакансии в базу данных"""
-    conn = sqlite3.connect(Config.DATABASE_PATH)
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute('''
-            INSERT OR REPLACE INTO vacancies 
-            (id, title, company, url, description, requirements, 
-             salary_min, salary_max, currency, area, experience, schedule, employment)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            vacancy_data['id'],
-            vacancy_data['title'],
-            vacancy_data['company'],
-            vacancy_data['url'],
-            vacancy_data.get('description', ''),
-            vacancy_data.get('requirements', ''),
-            vacancy_data.get('salary_min'),
-            vacancy_data.get('salary_max'),
-            vacancy_data.get('currency', ''),
-            vacancy_data.get('area', ''),
-            vacancy_data.get('experience', ''),
-            vacancy_data.get('schedule', ''),
-            vacancy_data.get('employment', '')
-        ))
-        conn.commit()
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
-    finally:
-        conn.close()
-
-def add_favorite(user_id: int, vacancy_id: str, title: str, company: str, url: str):
-    """Добавление вакансии в избранное"""
-    # Сначала сохраняем вакансию в таблицу вакансий
-    save_vacancy({
-        'id': vacancy_id,
-        'title': title,
-        'company': company,
-        'url': url
-    })
-    
-    conn = sqlite3.connect(Config.DATABASE_PATH)
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute('''
-            INSERT OR IGNORE INTO favorites (user_id, vacancy_id)
-            VALUES (?, ?)
-        ''', (user_id, vacancy_id))
-        conn.commit()
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
-    finally:
-        conn.close()
-
-def remove_favorite(user_id: int, vacancy_id: str):
-    """Удаление вакансии из избранного"""
-    conn = sqlite3.connect(Config.DATABASE_PATH)
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute('''
-            DELETE FROM favorites
-            WHERE user_id = ? AND vacancy_id = ?
-        ''', (user_id, vacancy_id))
-        conn.commit()
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
-    finally:
-        conn.close()
-
-def is_favorite(user_id: int, vacancy_id: str) -> bool:
-    """Проверка, является ли вакансия избранной"""
-    conn = sqlite3.connect(Config.DATABASE_PATH)
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute('''
-            SELECT 1 FROM favorites
-            WHERE user_id = ? AND vacancy_id = ?
-        ''', (user_id, vacancy_id))
-        result = cursor.fetchone()
-        return result is not None
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
-        return False
-    finally:
-        conn.close()
-
-def get_favorites(user_id: int) -> List[Tuple]:
-    """Получение списка избранных вакансий"""
-    conn = sqlite3.connect(Config.DATABASE_PATH)
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute('''
-            SELECT v.id, v.title, v.company, v.url
-            FROM favorites f
-            JOIN vacancies v ON f.vacancy_id = v.id
-            WHERE f.user_id = ?
-        ''', (user_id,))
-        return cursor.fetchall()
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
-        return []
-    finally:
-        conn.close()
-
-def add_search_history(user_id: int, query: str, filters: str):
-    """Добавление записи в историю поиска"""
-    conn = sqlite3.connect(Config.DATABASE_PATH)
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute('''
-            INSERT INTO search_history (user_id, query, timestamp, filters)
-            VALUES (?, ?, ?, ?)
-        ''', (user_id, query, datetime.now().timestamp(), filters))
-        conn.commit()
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
-    finally:
-        conn.close()
-
-def get_search_history(user_id: int) -> List[Tuple]:
-    """Получение истории поиска"""
-    conn = sqlite3.connect(Config.DATABASE_PATH)
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute('''
-            SELECT id, query, timestamp, filters
-            FROM search_history
-            WHERE user_id = ?
-            ORDER BY timestamp DESC
-        ''', (user_id,))
-        return cursor.fetchall()
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
-        return []
-    finally:
-        conn.close()
-
-def add_subscription(user_id: int, query: str, filters: str):
-    """Добавление подписки"""
-    conn = sqlite3.connect(Config.DATABASE_PATH)
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute('''
-            INSERT INTO subscriptions (user_id, query, filters)
+async def save_search_query(user_id: int, query: str, filters: Dict[str, Any]) -> None:
+    """Сохранение поискового запроса"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            INSERT INTO search_queries (user_id, query, filters)
             VALUES (?, ?, ?)
-        ''', (user_id, query, filters))
-        conn.commit()
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
-        return False
-    finally:
-        conn.close()
-    return True
+        ''', (user_id, query, json.dumps(filters, ensure_ascii=False)))
+        await db.commit()
 
-def remove_subscription(user_id: int, query: str):
-    """Удаление подписки"""
-    conn = sqlite3.connect(Config.DATABASE_PATH)
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute('''
-            UPDATE subscriptions
-            SET is_active = FALSE
-            WHERE user_id = ? AND query = ? AND is_active = TRUE
-        ''', (user_id, query))
-        conn.commit()
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
-    finally:
-        conn.close()
 
-def get_subscriptions(user_id: int) -> List[Tuple]:
-    """Получение активных подписок"""
-    conn = sqlite3.connect(Config.DATABASE_PATH)
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute('''
-            SELECT id, query, filters
-            FROM subscriptions
-            WHERE user_id = ? AND is_active = TRUE
+async def get_favorites(user_id: int) -> List[Dict[str, Any]]:
+    """Получение избранных вакансий"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute('''
+            SELECT * FROM favorites 
+            WHERE user_id = ? 
+            ORDER BY added_at DESC
         ''', (user_id,))
-        return cursor.fetchall()
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
-        return []
-    finally:
-        conn.close()
+        rows = await cursor.fetchall()
+        
+        favorites = []
+        for row in rows:
+            fav = dict(row)
+            if fav['vacancy_data']:
+                fav['vacancy_data'] = json.loads(fav['vacancy_data'])
+            favorites.append(fav)
+        
+        return favorites
 
-def get_all_subscriptions() -> List[Tuple]:
-    """Получение всех активных подписок (для рассылки)"""
-    conn = sqlite3.connect(Config.DATABASE_PATH)
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute('''
-            SELECT s.user_id, s.query, s.filters
+
+async def add_favorite(user_id: int, vacancy_id: str, vacancy_data: Dict[str, Any]) -> bool:
+    """Добавление в избранное"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            await db.execute('''
+                INSERT INTO favorites (user_id, vacancy_id, vacancy_data)
+                VALUES (?, ?, ?)
+            ''', (user_id, vacancy_id, json.dumps(vacancy_data, ensure_ascii=False)))
+            await db.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            # Вакансия уже в избранном
+            return False
+
+
+async def remove_favorite(user_id: int, vacancy_id: str) -> bool:
+    """Удаление из избранного"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute('''
+            DELETE FROM favorites 
+            WHERE user_id = ? AND vacancy_id = ?
+        ''', (user_id, vacancy_id))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def is_favorite(user_id: int, vacancy_id: str) -> bool:
+    """Проверка, находится ли вакансия в избранном"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute('''
+            SELECT 1 FROM favorites 
+            WHERE user_id = ? AND vacancy_id = ?
+        ''', (user_id, vacancy_id))
+        return await cursor.fetchone() is not None
+
+
+async def get_subscriptions(user_id: int) -> List[Dict[str, Any]]:
+    """Получение подписок пользователя"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute('''
+            SELECT * FROM subscriptions 
+            WHERE user_id = ? AND is_active = TRUE
+            ORDER BY created_at DESC
+        ''', (user_id,))
+        rows = await cursor.fetchall()
+        
+        subscriptions = []
+        for row in rows:
+            sub = dict(row)
+            if sub['filters']:
+                sub['filters'] = json.loads(sub['filters'])
+            subscriptions.append(sub)
+        
+        return subscriptions
+
+
+async def add_subscription(user_id: int, name: str, query: str, filters: Dict[str, Any]) -> int:
+    """Добавление подписки"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute('''
+            INSERT INTO subscriptions (user_id, name, query, filters)
+            VALUES (?, ?, ?, ?)
+        ''', (user_id, name, query, json.dumps(filters, ensure_ascii=False)))
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def delete_subscription(subscription_id: int) -> bool:
+    """Удаление подписки"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute('''
+            UPDATE subscriptions 
+            SET is_active = FALSE 
+            WHERE id = ?
+        ''', (subscription_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def update_subscription_last_check(subscription_id: int) -> None:
+    """Обновление времени последней проверки подписки"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            UPDATE subscriptions 
+            SET last_check = CURRENT_TIMESTAMP 
+            WHERE id = ?
+        ''', (subscription_id,))
+        await db.commit()
+
+
+async def get_active_subscriptions() -> List[Dict[str, Any]]:
+    """Получение всех активных подписок для проверки"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute('''
+            SELECT s.*, u.language_code 
             FROM subscriptions s
+            JOIN users u ON s.user_id = u.user_id
             WHERE s.is_active = TRUE
         ''')
-        return cursor.fetchall()
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
-        return []
-    finally:
-        conn.close()
+        rows = await cursor.fetchall()
+        
+        subscriptions = []
+        for row in rows:
+            sub = dict(row)
+            if sub['filters']:
+                sub['filters'] = json.loads(sub['filters'])
+            subscriptions.append(sub)
+        
+        return subscriptions
 
-def get_user(user_id: int) -> Optional[Tuple]:
-    """Получение информации о пользователе"""
-    conn = sqlite3.connect(Config.DATABASE_PATH)
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))
-        return cursor.fetchone()
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
-        return None
-    finally:
-        conn.close()
+
+async def add_notification_history(subscription_id: int, vacancy_id: str) -> None:
+    """Добавление записи в историю уведомлений"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            INSERT INTO notification_history (subscription_id, vacancy_id)
+            VALUES (?, ?)
+        ''', (subscription_id, vacancy_id))
+        await db.commit()
+
+
+async def was_notified(subscription_id: int, vacancy_id: str) -> bool:
+    """Проверка, было ли уже отправлено уведомление о вакансии"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute('''
+            SELECT 1 FROM notification_history 
+            WHERE subscription_id = ? AND vacancy_id = ?
+        ''', (subscription_id, vacancy_id))
+        return await cursor.fetchone() is not None
+
+
+async def get_statistics() -> Dict[str, int]:
+    """Получение статистики для админов"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        stats = {}
+        
+        # Количество пользователей
+        cursor = await db.execute('SELECT COUNT(*) FROM users')
+        stats['total_users'] = (await cursor.fetchone())[0]
+        
+        # Активные пользователи за последние 7 дней
+        cursor = await db.execute('''
+            SELECT COUNT(*) FROM users 
+            WHERE last_active > datetime('now', '-7 days')
+        ''')
+        stats['active_users'] = (await cursor.fetchone())[0]
+        
+        # Количество поисков
+        cursor = await db.execute('SELECT COUNT(*) FROM search_queries')
+        stats['total_searches'] = (await cursor.fetchone())[0]
+        
+        # Количество избранных
+        cursor = await db.execute('SELECT COUNT(*) FROM favorites')
+        stats['total_favorites'] = (await cursor.fetchone())[0]
+        
+        # Количество подписок
+        cursor = await db.execute('SELECT COUNT(*) FROM subscriptions WHERE is_active = TRUE')
+        stats['active_subscriptions'] = (await cursor.fetchone())[0]
+        
+        return stats
