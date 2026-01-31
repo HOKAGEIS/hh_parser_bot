@@ -979,19 +979,80 @@ async def request_location(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+# ==================== ГЕОЛОКАЦИЯ ====================
+
+@router.callback_query(F.data == "detect_city")
+async def detect_city(callback: CallbackQuery, state: FSMContext):
+    """Попытка автоопределения города по IP (может не работать на сервере)"""
+    await callback.answer("🔍 Определяю...")
+    
+    city = await hh.detect_city_by_ip()
+    
+    data = await state.get_data()
+    
+    if city:
+        await state.update_data(city=city.get("id"), city_name=city.get("text"))
+        data = await state.get_data()
+        
+        try:
+            await callback.message.edit_text(
+                f"✅ Город: <b>{city.get('text')}</b>\n\n"
+                f"🔍 Запрос: <b>{data.get('query')}</b>",
+                reply_markup=kb.filters_kb(data),
+                parse_mode="HTML"
+            )
+        except:
+            await callback.message.answer(
+                f"✅ Город: <b>{city.get('text')}</b>",
+                reply_markup=kb.filters_kb(data),
+                parse_mode="HTML"
+            )
+    else:
+        try:
+            await callback.message.edit_text(
+                "😔 Не удалось определить автоматически.\n\n"
+                "📍 Отправьте геолокацию или выберите город:",
+                reply_markup=kb.cities_kb(),
+                parse_mode="HTML"
+            )
+        except:
+            pass
+
+
+@router.callback_query(F.data == "request_location")
+async def request_location(callback: CallbackQuery, state: FSMContext):
+    """Запрос геолокации у пользователя"""
+    await state.set_state(SearchStates.entering_city)
+    await state.update_data(waiting_location=True)
+    
+    await callback.message.answer(
+        "📍 <b>Отправьте геолокацию</b>\n\n"
+        "Нажмите кнопку ниже или напишите название города:",
+        reply_markup=kb.location_request_kb(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
 @router.message(F.location)
 async def process_location(message: Message, state: FSMContext):
     """Обработка полученной геолокации"""
     lat = message.location.latitude
     lon = message.location.longitude
     
-    await message.answer("🔍 Определяю город...", reply_markup=kb.main_menu_kb(message.from_user.id))
+    await message.answer(
+        "🔍 Определяю город...",
+        reply_markup=kb.main_menu_kb(message.from_user.id)
+    )
     
-    # Ищем город по координатам через API
     city = await find_city_by_coordinates(lat, lon)
     
     if city:
-        await state.update_data(city=city.get("id"), city_name=city.get("name"))
+        await state.update_data(
+            city=city.get("id"),
+            city_name=city.get("name"),
+            waiting_location=False
+        )
         await state.set_state(None)
         
         data = await state.get_data()
@@ -999,7 +1060,7 @@ async def process_location(message: Message, state: FSMContext):
         
         if query:
             await message.answer(
-                f"✅ Определён город: <b>{city.get('name')}</b>\n\n"
+                f"✅ Город: <b>{city.get('name')}</b>\n\n"
                 f"🔍 Запрос: <b>{query}</b>",
                 reply_markup=kb.filters_kb(data),
                 parse_mode="HTML"
@@ -1007,44 +1068,42 @@ async def process_location(message: Message, state: FSMContext):
         else:
             await message.answer(
                 f"✅ Город установлен: <b>{city.get('name')}</b>\n\n"
-                "Теперь начните поиск вакансий!",
+                "Теперь начните поиск!",
                 reply_markup=kb.main_menu_kb(message.from_user.id),
                 parse_mode="HTML"
             )
     else:
+        await state.set_state(None)
         await message.answer(
             "😔 Не удалось определить город.\n"
-            "Попробуйте ввести название вручную.",
+            "Введите название вручную через поиск.",
             reply_markup=kb.main_menu_kb(message.from_user.id)
         )
-        await state.set_state(None)
 
 
 async def find_city_by_coordinates(lat: float, lon: float) -> dict:
-    """Найти город по координатам через Nominatim API"""
+    """Найти город по координатам"""
     import aiohttp
     
     try:
         async with aiohttp.ClientSession() as session:
-            # Используем бесплатный Nominatim API
             url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&accept-language=ru"
             headers = {"User-Agent": "HH-Parser-Bot/1.0"}
             
-            async with session.get(url, headers=headers) as resp:
+            async with session.get(url, headers=headers, timeout=10) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     address = data.get("address", {})
                     
-                    # Ищем город в ответе
                     city_name = (
-                        address.get("city") or 
-                        address.get("town") or 
-                        address.get("village") or 
-                        address.get("state")
+                        address.get("city") or
+                        address.get("town") or
+                        address.get("village") or
+                        address.get("state") or
+                        address.get("county")
                     )
                     
                     if city_name:
-                        # Ищем город в HH.ru
                         cities = await hh.search_area(city_name)
                         if cities:
                             return {
@@ -1052,27 +1111,34 @@ async def find_city_by_coordinates(lat: float, lon: float) -> dict:
                                 "name": cities[0].get("text", city_name)
                             }
     except Exception as e:
-        print(f"Ошибка определения города: {e}")
+        print(f"Ошибка геолокации: {e}")
     
     return None
 
 
 @router.message(F.text == "❌ Отмена")
-async def cancel_location(message: Message, state: FSMContext):
-    await state.set_state(None)
-    
+async def cancel_location_request(message: Message, state: FSMContext):
+    """Отмена запроса геолокации"""
     data = await state.get_data()
     query = data.get("query")
     
+    await state.update_data(waiting_location=False)
+    await state.set_state(None)
+    
     if query:
         await message.answer(
-            f"🔍 Запрос: <b>{query}</b>",
-            reply_markup=kb.filters_kb(data),
+            f"🔍 Запрос: <b>{query}</b>\n\n"
+            "Выберите город из списка:",
+            reply_markup=kb.main_menu_kb(message.from_user.id),
             parse_mode="HTML"
+        )
+        # Отправляем инлайн клавиатуру с городами
+        await message.answer(
+            "📍 Выберите город:",
+            reply_markup=kb.cities_kb()
         )
     else:
         await message.answer(
             "❌ Отменено",
             reply_markup=kb.main_menu_kb(message.from_user.id)
         )
-
