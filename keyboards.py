@@ -847,4 +847,80 @@ def admin_back_kb() -> InlineKeyboardMarkup:
     )
     return builder.as_markup()
 
+# ==================== ПОДДЕРЖКА ====================
+
+def support_menu_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✏️ Написать обращение", callback_data="create_ticket")
+    )
+    return builder.as_markup()
+
+
+def support_ticket_kb(ticket_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✏️ Написать ещё", callback_data=f"continue_ticket_{ticket_id}")
+    )
+    builder.row(
+        InlineKeyboardButton(text="✅ Закрыть обращение", callback_data=f"close_my_ticket_{ticket_id}")
+    )
+    return builder.as_markup()
+
+
+# ==================== АДМИН: ТИКЕТЫ ====================
+
+def admin_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📬 Обращения", callback_data="admin_tickets")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")
+    )
+    return builder.as_markup()
+
+
+def admin_tickets_list_kb(tickets: list) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    
+    for t in tickets[:10]:
+        username = t['username'] or t['user_id']
+        builder.row(
+            InlineKeyboardButton(
+                text=f"#{t['id']} — {username}",
+                callback_data=f"admin_view_ticket_{t['id']}"
+            )
+        )
+    
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back")
+    )
+    
+    return builder.as_markup()
+
+
+def admin_ticket_kb(ticket_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✏️ Ответить", callback_data=f"admin_reply_{ticket_id}")
+    )
+    builder.row(
+        InlineKeyboardButton(text="✅ Закрыть тикет", callback_data=f"admin_close_ticket_{ticket_id}")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_tickets")
+    )
+    return builder.as_markup()
+
+
+def admin_back_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back")
+    )
+    return builder.as_markup()
 
