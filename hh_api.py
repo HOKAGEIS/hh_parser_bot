@@ -1,7 +1,7 @@
 import aiohttp
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
-from config import Config  # Импортируем класс напрямую
+from config import Config
 import re
 
 
@@ -79,7 +79,7 @@ class HHApi:
     """Класс для работы с API HeadHunter"""
     
     def __init__(self):
-        self.base_url = Config.HH_API_BASE_URL  # Используем класс Config напрямую
+        self.base_url = Config.HH_API_BASE_URL
         self.session = None
         self.headers = {
             'User-Agent': 'HH-Bot/1.0',
@@ -230,6 +230,33 @@ class HHApi:
             search_recursive(all_areas, city_name)
         
         return results[:10]
+    
+    async def search_area_by_coordinates(self, lat: float, lon: float) -> Optional[str]:
+        """Поиск города по координатам"""
+        try:
+            # Используем OpenStreetMap API для геокодирования
+            async with aiohttp.ClientSession() as session:
+                url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&accept-language=ru"
+                headers = {"User-Agent": "HH-Bot/1.0"}
+                
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if "address" in data:
+                            address = data["address"]
+                            city = address.get("city") or address.get("town") or address.get("village")
+                            if city:
+                                return city
+                            
+                            # Проверяем другие возможные поля
+                            for key in ["municipality", "district", "region"]:
+                                if key in address:
+                                    return address[key]
+        
+        except Exception as e:
+            print(f"Geocoding error: {e}")
+        
+        return None
     
     async def get_salary_statistics(self, text: str, area: str = None) -> Dict[str, Any]:
         params = {
