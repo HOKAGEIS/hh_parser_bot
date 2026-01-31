@@ -14,7 +14,7 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
-from config import config
+from Config import Config
 
 
 # ==================== УТИЛИТЫ ====================
@@ -427,3 +427,4 @@ def admin_back_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back"))
     return builder.as_markup()
+
