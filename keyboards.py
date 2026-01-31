@@ -7,7 +7,6 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from config import config
 from typing import List
-
 # ==================== ГЛАВНОЕ МЕНЮ ====================
 
 def main_menu_kb(user_id: int = None) -> ReplyKeyboardMarkup:
@@ -925,6 +924,7 @@ def admin_back_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back")
     )
     return builder.as_markup()
+
 
 
 
