@@ -160,7 +160,7 @@ async def add_user_message(message: Message, state: FSMContext):
     )
     
     # Уведомляем админов
-    bot = Bot.get_current()
+   async def process_support_message(message: Message, state: FSMContext, bot: Bot):
     for admin_id in config.ADMIN_IDS:
         try:
             username = f"@{message.from_user.username}" if message.from_user.username else f"ID: {message.from_user.id}"
