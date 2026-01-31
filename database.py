@@ -1,3 +1,4 @@
+# database.py (исправленный код)
 import sqlite3
 import json
 from datetime import datetime
@@ -319,4 +320,3 @@ def get_user(user_id: int) -> Optional[Tuple]:
         return None
     finally:
         conn.close()
-
