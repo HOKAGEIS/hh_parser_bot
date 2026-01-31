@@ -32,7 +32,7 @@ class Config:
     # ID администраторов
     ADMIN_IDS = [
         int(id.strip()) 
-        for id in os.getenv('ADMIN_IDS', '8466698088').split(',') 
+        for id in os.getenv('ADMIN_IDS', '').split(',') 
         if id.strip().isdigit()
     ]
     
@@ -80,3 +80,4 @@ Config.validate()
 
 # Экспорт
 __all__ = ['Config', 'config']
+
