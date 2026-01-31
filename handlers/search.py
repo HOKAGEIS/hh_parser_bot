@@ -1084,7 +1084,10 @@ async def close_search(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "cancel")
 async def cancel(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    await _safe_edit_text(callback.message, "❌ Отменено")
+    await callback.message.edit_text(
+        "❌ Отменено",
+        reply_markup=kb.main_menu_kb(callback.from_user.id)
+    )
     await callback.answer()
 
 
