@@ -48,7 +48,7 @@ async def cmd_start(message: Message):
         "• 🔔 Подписки\n"
         "• 📊 Аналитика\n\n"
         "Выберите действие 👇",
-        reply_markup=kb.main_menu_kb()
+        reply_markup=kb.main_menu_kb(message.from_user.id)
     )
 
 
@@ -115,3 +115,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("👋 Бот остановлен")
+
